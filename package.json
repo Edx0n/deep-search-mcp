@@ -1,0 +1,55 @@
+{
+  "name": "deep-search-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server for research beyond Google: academic databases, open data, independent web indexes, web archives and the Tor dark web (via Ahmia), with built-in safety filters.",
+  "type": "module",
+  "bin": {
+    "deep-search-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "tsx scripts/smoke.ts",
+    "live": "tsx scripts/live-check.ts"
+  },
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "osint",
+    "deep-web",
+    "dark-web",
+    "tor",
+    "ahmia",
+    "academic-search",
+    "openalex"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "cheerio": "^1.2.0",
+    "fast-xml-parser": "^5.12.0",
+    "fetch-socks": "^1.3.3",
+    "undici": "^7.30.2",
+    "unpdf": "^1.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}
