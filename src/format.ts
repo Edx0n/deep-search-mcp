@@ -5,7 +5,7 @@ import { SCOPE_LABELS } from "./sources/registry.js";
 import type { ArchiveOutcome } from "./tools/archive.js";
 import type { PageOutcome } from "./tools/page.js";
 import type { Scope, SearchResult } from "./types.js";
-import { formatNumber } from "./util/text.js";
+import { clip, formatNumber } from "./util/text.js";
 
 export const CHARACTER_LIMIT = 25_000;
 export type ResponseFormat = "markdown" | "json";
@@ -15,8 +15,9 @@ export interface Rendered {
   structured?: Record<string, unknown>;
 }
 
+/** Compact JSON: indentation would spend a third of the size budget on whitespace. */
 function json(value: Record<string, unknown>): Rendered {
-  return { text: JSON.stringify(value, null, 2), structured: value };
+  return { text: JSON.stringify(value), structured: value };
 }
 
 /** Keeps titles from breaking Markdown emphasis. */
@@ -71,7 +72,14 @@ function capOutcome(outcome: SearchOutcome, cap: number): SearchOutcome {
   return { ...rest, results, sources, has_more: hasMore, ...(hasMore ? { next_offset: outcome.offset + cap } : {}) };
 }
 
-function searchMarkdown(o: SearchOutcome, trimmedTo?: number): string {
+/** How a search response was shrunk to fit CHARACTER_LIMIT. */
+interface Fit {
+  snippetMax?: number;
+  trimmedTo?: number;
+}
+
+function searchMarkdown(o: SearchOutcome, fit: Fit = {}): string {
+  const { snippetMax, trimmedTo } = fit;
   const lines: string[] = [`# Deep Search: "${o.query}"`];
   const scopeInfo = [`Scopes: ${o.scopes.join(", ") || "none"}`, `up to ${trimmedTo ?? o.limit_per_source} per source`];
   if (o.offset) scopeInfo.push(`offset ${o.offset}`);
@@ -88,7 +96,11 @@ function searchMarkdown(o: SearchOutcome, trimmedTo?: number): string {
       .join(", ");
     lines.push(`**Safety filter:** ${o.safety.hidden} result${o.safety.hidden > 1 ? "s" : ""} hidden (${reasons}).`);
   }
-  if (trimmedTo !== undefined) lines.push(`_Output trimmed to ${trimmedTo} result(s) per source to fit the response size limit._`);
+  if (trimmedTo !== undefined) {
+    lines.push(`_To fit the response size limit: ${trimmedTo} result(s) per source, snippets cut to ${snippetMax} characters._`);
+  } else if (snippetMax !== undefined) {
+    lines.push(`_Snippets cut to ${snippetMax} characters to fit the response size limit; deepsearch_fetch_page reads the full text._`);
+  }
 
   const scopes = [...new Set(o.sources.map(s => s.scope))] as Scope[];
   for (const scope of scopes) {
@@ -112,15 +124,41 @@ function searchMarkdown(o: SearchOutcome, trimmedTo?: number): string {
   return lines.join("\n");
 }
 
+/** Snippet lengths tried, in order, before any result is dropped. */
+export const SNIPPET_STEPS = [280, 140] as const;
+
+function shortenSnippets(outcome: SearchOutcome, max: number): SearchOutcome {
+  return { ...outcome, results: outcome.results.map(r => (r.snippet && r.snippet.length > max ? { ...r, snippet: clip(r.snippet, max) } : r)) };
+}
+
+/**
+ * Renders a search and keeps it under CHARACTER_LIMIT: first shorter snippets (every result stays),
+ * then fewer results per source, one at a time (next_offset stays consistent).
+ */
 export function renderSearch(outcome: SearchOutcome, format: ResponseFormat): Rendered {
-  const render = (o: SearchOutcome, trimmedTo?: number): Rendered =>
-    format === "json" ? json({ ...o, ...(trimmedTo !== undefined ? { trimmed_to: trimmedTo } : {}) } as unknown as Record<string, unknown>) : { text: searchMarkdown(o, trimmedTo) };
+  const render = (o: SearchOutcome, fit: Fit = {}): Rendered =>
+    format === "json"
+      ? json({
+          ...o,
+          ...(fit.snippetMax !== undefined ? { snippets_shortened_to: fit.snippetMax } : {}),
+          ...(fit.trimmedTo !== undefined ? { trimmed_to: fit.trimmedTo } : {})
+        } as unknown as Record<string, unknown>)
+      : { text: searchMarkdown(o, fit) };
 
   let rendered = render(outcome);
-  let cap = outcome.limit_per_source;
-  while (rendered.text.length > CHARACTER_LIMIT && cap > 1) {
-    cap = Math.max(1, Math.floor(cap * 0.7));
-    rendered = render(capOutcome(outcome, cap), cap);
+  if (rendered.text.length <= CHARACTER_LIMIT) return rendered;
+
+  let shortened = outcome;
+  let snippetMax: number | undefined;
+  for (const max of SNIPPET_STEPS) {
+    snippetMax = max;
+    shortened = shortenSnippets(outcome, max);
+    rendered = render(shortened, { snippetMax });
+    if (rendered.text.length <= CHARACTER_LIMIT) return rendered;
+  }
+
+  for (let cap = outcome.limit_per_source - 1; cap >= 1 && rendered.text.length > CHARACTER_LIMIT; cap--) {
+    rendered = render(capOutcome(shortened, cap), { snippetMax, trimmedTo: cap });
   }
   return rendered;
 }

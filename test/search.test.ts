@@ -148,21 +148,47 @@ describe("renderSearch", () => {
     expect(JSON.parse(rendered.text)).toEqual(rendered.structured);
   });
 
-  it("stays under the character limit by showing fewer results per source", async () => {
-    const long = "word ".repeat(120);
-    const big = fakeSource("openalex", "academic", "academic", () => ({
-      total: 1000,
-      results: Array.from({ length: 25 }, (_, i) => r("openalex", `Paper ${i} ${long}`.slice(0, 300), `https://p.example/${i}`, { snippet: long }))
-    }));
-    const big2 = fakeSource("core", "academic", "academic", () => ({
-      total: 1000,
-      results: Array.from({ length: 25 }, (_, i) => r("core", `Other ${i}`, `https://q.example/${i}`, { snippet: long }))
-    }));
-    const out = await runSearch({ query: "x", limit_per_source: 25, offset: 0 }, deps(), undefined, [big, big2]);
-    for (const format of ["markdown", "json"] as const) {
-      const rendered = renderSearch(out, format);
-      expect(rendered.text.length).toBeLessThanOrEqual(CHARACTER_LIMIT);
-      expect(rendered.text).toMatch(format === "json" ? /"trimmed_to"/ : /Output trimmed/);
-    }
+  const LONG_SNIPPET = "word ".repeat(120); // 600 characters, the maximum a source returns
+  const bulky = (ids: SourceId[], count: number, title: (id: SourceId, i: number) => string) =>
+    ids.map(id =>
+      fakeSource(id, "academic", "academic", () => ({
+        total: 1000,
+        results: Array.from({ length: count }, (_, i) => r(id, title(id, i), `https://x.example/${id}/${i}`, { snippet: LONG_SNIPPET }))
+      }))
+    );
+
+  it("shortens snippets before dropping any result", async () => {
+    const sources = bulky(["openalex", "core", "crossref", "doaj"], 10, (id, i) => `${id} paper ${i}`);
+    const out = await runSearch({ query: "x", limit_per_source: 10, offset: 0 }, deps(), undefined, sources);
+    expect(out.results).toHaveLength(40);
+
+    const json = renderSearch(out, "json");
+    expect(json.text.length).toBeLessThanOrEqual(CHARACTER_LIMIT);
+    expect(json.structured).toMatchObject({ snippets_shortened_to: 280 });
+    expect(json.structured).not.toHaveProperty("trimmed_to");
+    expect((json.structured as { results: unknown[] }).results).toHaveLength(40);
+
+    const md = renderSearch(out, "markdown");
+    expect(md.text.length).toBeLessThanOrEqual(CHARACTER_LIMIT);
+    expect(md.text).toMatch(/Snippets cut to 280 characters/);
+    expect(md.text).toContain("doaj paper 9");
+  });
+
+  it("drops results per source only when shorter snippets are not enough", async () => {
+    const sources = bulky(["openalex", "core", "crossref"], 25, (id, i) => `${id} ${i} ${"long title ".repeat(30)}`.slice(0, 300));
+    const out = await runSearch({ query: "x", limit_per_source: 25, offset: 0 }, deps(), undefined, sources);
+
+    const json = renderSearch(out, "json");
+    const structured = json.structured as { trimmed_to: number; snippets_shortened_to: number; next_offset: number; results: unknown[] };
+    expect(json.text.length).toBeLessThanOrEqual(CHARACTER_LIMIT);
+    expect(structured.snippets_shortened_to).toBe(140);
+    expect(structured.trimmed_to).toBeGreaterThan(5);
+    expect(structured.trimmed_to).toBeLessThan(25);
+    expect(structured.results).toHaveLength(structured.trimmed_to * 3);
+    expect(structured.next_offset).toBe(structured.trimmed_to);
+
+    const md = renderSearch(out, "markdown");
+    expect(md.text.length).toBeLessThanOrEqual(CHARACTER_LIMIT);
+    expect(md.text).toMatch(/result\(s\) per source, snippets cut to 140 characters/);
   });
 });

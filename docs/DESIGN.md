@@ -54,7 +54,7 @@ src/
    - Fontes paginadas no servidor recebem `offset` e `limit`. As baseadas em página usam `pageWindow()`.
    - O Ahmia devolve tudo numa página só (`complete: true`). Por isso o orquestrador filtra **antes** de paginar, para as páginas ficarem consistentes.
 6. **Dedupe**: por DOI, ou por URL normalizada. A primeira ocorrência fica e ganha `also_in`.
-7. **Formatação**: se passar de 25 mil caracteres, reduz o número de itens por fonte, aplicando o mesmo teto a todas. O `next_offset` continua correto.
+7. **Formatação**: se passar de 25 mil caracteres, primeiro encurta os resumos (600 → 280 → 140 caracteres), mantendo todos os resultados. Só se ainda não couber reduz o número de itens por fonte, um a um, aplicando o mesmo teto a todas, e o `next_offset` continua correto. O JSON é compacto (sem indentação).
 
 ## Modelo de segurança
 
