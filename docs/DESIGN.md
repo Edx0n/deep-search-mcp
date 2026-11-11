@@ -1,90 +1,91 @@
-# Design do deep-search-mcp
+# Deep Search MCP: design notes
 
-## Objetivo
+## Goal
 
-Dar a um assistente (via MCP) acesso a fontes que buscadores comerciais enterram ou não indexam: literatura acadêmica e cinzenta, dados abertos, arquivos digitais, índices independentes e serviços `.onion`. Tudo com um filtro de segurança que o usuário não consegue desligar por inteiro.
+Give an assistant (through MCP) access to sources that commercial search engines bury or never index: scholarly and grey literature, open data, digital archives, independent indexes and `.onion` services. All of it behind a safety filter that the user cannot switch off entirely.
 
-**Critérios de sucesso**
+**Success criteria**
 
-- Uma única chamada (`deepsearch_search`) cobre todos os escopos. Falhas de uma fonte não derrubam a busca.
-- Resultados citáveis (URL, DOI, PDF aberto) e paginação previsível.
-- Conteúdo de abuso nunca é mostrado. Pesquisa legítima *sobre* temas sensíveis continua possível.
-- Nada de contornar CAPTCHAs ou bloqueios anti-bot. O cliente se identifica honestamente.
+- A single call (`deepsearch_search`) covers every scope. One failing source never fails the search.
+- Citable results (URL, DOI, open-access PDF) and predictable pagination.
+- Abusive content is never shown. Legitimate research *about* sensitive topics stays possible.
+- No CAPTCHA or bot-check evasion. The client identifies itself honestly.
 
-## Arquitetura
+## Architecture
 
 ```
 src/
-├── index.ts              entrada stdio (logs só em stderr)
-├── server.ts             createRuntime() + createServer(): 4 ferramentas + 1 prompt (SDK MCP v2, Zod 4)
-├── config.ts             variáveis de ambiente → Config
-├── search.ts             orquestrador: seleção de fontes, recusa por canal, execução paralela,
-│                         filtro, dedupe, paginação
-├── format.ts             Markdown/JSON, limite de 25 mil caracteres (corta itens, não texto)
-├── cache.ts              cache TTL em memória (10 min)
+├── index.ts              stdio entry point (logs go to stderr only)
+├── server.ts             createRuntime() + createServer(): 4 tools + 1 prompt (MCP SDK v2, Zod 4)
+├── config.ts             environment variables → Config
+├── search.ts             orchestrator: source selection, per-channel refusal, parallel execution,
+│                         filtering, de-duplication, pagination
+├── format.ts             Markdown/JSON under 25k characters (shorter snippets first, then fewer items)
+├── cache.ts              in-memory TTL cache (10 min)
 ├── http/
-│   ├── client.ts         undici.request: só os headers que definimos, redirects revalidados,
-│   │                     limite de bytes, Tor via SOCKS5 (fetch-socks)
-│   └── ssrf.ts           bloqueio de IPs privados (no DNS lookup, na hora da conexão)
+│   ├── client.ts         undici.request: only the headers we set, redirects re-checked,
+│   │                     byte limits, Tor through SOCKS5 (fetch-socks)
+│   └── ssrf.ts           private-address blocking (at DNS lookup, i.e. at connect time)
 ├── safety/
-│   ├── rules.ts          11 categorias, regras por canal e de recusa de consulta
-│   ├── normalize.ts      minúsculas, sem acentos, leetspeak, separadores de URL
+│   ├── rules.ts          11 categories, per-channel rules and query-refusal rules
+│   ├── normalize.ts      lowercase, no accents, leetspeak, URL separators
 │   ├── guard.ts          checkQuery / classify / checkDocument
-│   ├── banned.ts         lista negra MD5 do Ahmia (cache em disco por 24 h)
-│   └── scholarly.ts      hosts acadêmicos (páginas avaliadas com regras acadêmicas)
-├── sources/              uma fonte = parser puro (testável) + search() com a chamada HTTP
+│   ├── banned.ts         Ahmia's MD5 blacklist (24 h disk cache)
+│   └── scholarly.ts      scholarly hosts (their pages are screened with academic rules)
+├── sources/              one source = pure parser (testable) + search() doing the HTTP call
 │   ├── academic/         openalex, core, crossref (+ scielo), europepmc, arxiv, doaj,
 │   │                     semanticscholar, bdtd
 │   ├── data.ts           datacite, zenodo
 │   ├── archive.ts        internet archive
 │   ├── web.ts            marginalia, wiby, duckduckgo, brave
-│   ├── darkweb.ts        ahmia (clearnet ou espelho .onion)
-│   └── registry.ts       ordem de exibição e rótulos dos escopos
-├── extract/              HTML → texto estruturado + links; PDF → texto (unpdf)
-└── tools/                lógica de deepsearch_fetch_page e deepsearch_archived_versions
+│   ├── darkweb.ts        ahmia (clear web or onion mirror)
+│   └── registry.ts       display order and scope labels
+├── extract/              HTML → structured text + links; PDF → text (unpdf)
+└── tools/                logic of deepsearch_fetch_page and deepsearch_archived_versions
 ```
 
-## Fluxo de uma busca
+## Search flow
 
-1. **Seleção**: `sources` explícitas ou as fontes padrão dos `scopes` (todos, por padrão).
-2. **Recusa por canal**: `guard.checkQuery()` devolve os canais em que a consulta não pode rodar. Se todos os canais pedidos forem recusados, a ferramenta retorna erro com a explicação.
-3. **Execução paralela**: cada fonte tem o próprio timeout; erros viram status `error` no relatório da fonte.
-4. **Pós-processamento por fonte**: filtro de ano (as fontes que suportam filtram no servidor; para as outras, é uma rede de segurança), `exclude_domains`, lista negra do Ahmia e `guard.classify()`. O que é ocultado é contado por motivo, sem mostrar o conteúdo.
-5. **Paginação**:
-   - Fontes paginadas no servidor recebem `offset` e `limit`. As baseadas em página usam `pageWindow()`.
-   - O Ahmia devolve tudo numa página só (`complete: true`). Por isso o orquestrador filtra **antes** de paginar, para as páginas ficarem consistentes.
-6. **Dedupe**: por DOI, ou por URL normalizada. A primeira ocorrência fica e ganha `also_in`.
-7. **Formatação**: se passar de 25 mil caracteres, primeiro encurta os resumos (600 → 280 → 140 caracteres), mantendo todos os resultados. Só se ainda não couber reduz o número de itens por fonte, um a um, aplicando o mesmo teto a todas, e o `next_offset` continua correto. O JSON é compacto (sem indentação).
+1. **Selection**: explicit `sources`, or the default sources of the requested `scopes` (all of them by default).
+2. **Per-channel refusal**: `guard.checkQuery()` returns the channels where the query may not run. If every requested channel is refused, the tool returns an error that explains why.
+3. **Parallel execution**: each source has its own timeout; errors become an `error` status in that source's report.
+4. **Per-source post-processing**: year filter (sources that support it filter server-side; for the others this is a safety net), `exclude_domains`, Ahmia's blacklist and `guard.classify()`. Hidden results are counted by reason; their content is never shown.
+5. **Pagination**:
+   - Sources that paginate server-side receive `offset` and `limit`; page-based APIs go through `pageWindow()`.
+   - Ahmia returns everything in a single page (`complete: true`), so the orchestrator filters **before** paginating and pages stay consistent.
+6. **De-duplication**: by DOI, or by normalized URL. The first occurrence is kept and gains `also_in`.
+7. **Formatting**: above 25k characters, snippets are shortened first (600 → 280 → 140 characters) while every result is kept. Only if that is not enough, the number of items per source drops one at a time (the same cap for every source), and `next_offset` stays correct. JSON text is compact (no indentation).
 
-## Modelo de segurança
+## Safety model
 
-| Canal | Fontes | Regras aplicadas |
+| Channel | Sources | Rules applied |
 |---|---|---|
-| `academic` | metadados acadêmicos e páginas de hosts acadêmicos | só gírias inequívocas de abuso infantil |
-| `web` | buscadores da web, Internet Archive, páginas da clear web | todas as categorias ativas |
-| `darkweb` | Ahmia, páginas `.onion` | todas, mais regras de tópico (ex.: termos clínicos de abuso) e lista negra |
+| `academic` | scholarly metadata, and pages on scholarly hosts | only unambiguous child-abuse slang |
+| `web` | web search engines, Internet Archive, clear-web pages | every active category |
+| `darkweb` | Ahmia, `.onion` pages | every active category, plus topic rules (e.g. clinical abuse terms) and the blacklist |
 
-- **Consultas**: categorias travadas recusam a consulta nos canais abertos (`csam` explícito, `mass_harm`) ou só na dark web (termos de tópico, `exploitation`). Categorias configuráveis nunca recusam consultas, só ocultam anúncios.
-- **Documentos** (`deepsearch_fetch_page`): uma ocorrência de categoria travada já retém a página. Categorias configuráveis precisam de 3 ocorrências, para que uma notícia que só menciona o assunto passe.
-- **Regras miram transações, não temas**. "buy cocaine" é filtrado; "darknet drug markets research" não. Uma bateria de testes de falsos positivos protege casos como "bath bomb", "bomba d'água", "Al Gore", "drug delivery", "Lolita (Nabokov)", "cp command", "recover hacked Instagram account".
-- **Lista negra do Ahmia**: MD5 do domínio `.onion` (mesmo cálculo do código do Ahmia). Para abrir `.onion`, a lista precisa estar carregada (*fail-closed*).
+- **Queries**: locked categories refuse the query on the open channels (explicit `csam`, `mass_harm`) or only on the dark web (topic terms, `exploitation`). Configurable categories never refuse queries; they only hide listings.
+- **Documents** (`deepsearch_fetch_page`): a single hit of a locked category withholds the page. Configurable categories need 3 hits, so a news article that merely mentions the subject still passes.
+- **Rules target transactions, not topics**. "buy cocaine" is filtered; "darknet drug markets research" is not. A false-positive test suite protects cases such as "bath bomb", "bomba d'água", "Al Gore", "drug delivery", "Lolita (Nabokov)", "cp command" and "recover hacked Instagram account".
+- **Ahmia's blacklist**: MD5 of the `.onion` domain (the same computation as Ahmia's own code). Opening any `.onion` page requires the list to be loaded (fail-closed).
 
-## Decisões e alternativas descartadas
+## Decisions and rejected alternatives
 
-- **Só o Ahmia na dark web**: é o único índice com remoção ativa de abuso. Torch, Haystak e outros não filtram, e os endereços conhecidos estavam desatualizados.
-- **`undici.request` em vez de `fetch`**: o `fetch` injeta headers de navegador (`sec-fetch-mode`...). Com eles, o DuckDuckGo tratava o cliente como bot disfarçado; com uma requisição simples e honesta, responde normalmente.
-- **User-Agent**: honesto (`deep-search-mcp/x.y`) na clear web. O do Tor Browser só via Tor, pelo conjunto de anonimato.
-- **Crossref com fila serial (1 req/s)**: o pool público anuncia `x-rate-limit-limit: 1` e `x-concurrency-limit: 1`. Crossref e SciELO compartilham a fila e fazem 1 nova tentativa após 429.
-- **SciELO via Crossref (membro 530)**: a busca do SciELO bloqueia automação; o Crossref cobre os mesmos DOIs.
-- **Semantic Scholar e Brave sob demanda**: sem chave, um vive em 429 e o outro não funciona. O Marginalia roda por padrão porque, quando funciona, é a fonte mais "anti-favoritismo".
-- **E-mail do usuário nunca é enviado** às APIs. O *polite pool* só é usado se `DEEP_SEARCH_CONTACT_EMAIL` for definido.
+- **Ahmia only for the dark web**: it is the only index that actively removes abuse content. Torch, Haystak and others do not filter, and their known addresses were outdated.
+- **`undici.request` instead of `fetch`**: `fetch` injects browser headers (`sec-fetch-mode`…). With them, DuckDuckGo treated the client as a disguised bot; with a plain, honest request it answers normally.
+- **User-Agent**: honest (`deep-search-mcp/x.y`) on the clear web; Tor Browser's only over Tor, for its anonymity set.
+- **Crossref behind a serial queue (1 request/s)**: the public pool announces `x-rate-limit-limit: 1` and `x-concurrency-limit: 1`. Crossref and SciELO share the queue and retry once after a 429.
+- **SciELO through Crossref (member 530)**: SciELO's own search blocks automation; Crossref covers the same DOIs.
+- **Semantic Scholar and Brave on request**: without keys, one lives in HTTP 429 and the other does not work at all. Marginalia runs by default because, when it works, it is the most "anti-favoritism" source.
+- **The user's e-mail is never sent** to the APIs. The polite pool is used only if `DEEP_SEARCH_CONTACT_EMAIL` is set.
+- **Shorter snippets before fewer results**: an all-scope search used to be cut to 2 results per source. Shortening snippets first keeps 5 per source in Markdown; the full text is one `deepsearch_fetch_page` call away.
 
-## Testes
+## Tests
 
-- `npm test` (sem rede):
-  - regras de segurança: positivos, falsos positivos, desligamento e travas;
-  - parsers de todas as fontes, com fixtures sintéticas;
-  - cliente HTTP: SSRF, proxy SOCKS5 simulado (verifica que o nome `.onion` vai para o proxy), redirects e limite de bytes;
-  - extração de HTML, orquestrador com fontes falsas (dedupe, paginação pós-filtro, recusas, falhas isoladas) e limite de caracteres.
-- `npm run smoke`: cliente MCP real via stdio contra os serviços reais: busca acadêmica e na dark web, recusas, HTML, PDF do arXiv, SSRF, Wayback e validação de entrada.
-- `npm run live`: diagnóstico fonte a fonte.
+- `npm test` (no network):
+  - safety rules: positives, false positives, disabling and locks;
+  - parsers of every source, with synthetic fixtures;
+  - HTTP client: SSRF, a simulated SOCKS5 proxy (checks that the `.onion` name goes to the proxy), redirects and byte limits;
+  - HTML extraction, the orchestrator with fake sources (dedupe, post-filter pagination, refusals, isolated failures) and output sizing.
+- `npm run smoke`: a real MCP client over stdio against the real services: academic and dark web search, refusals, HTML, an arXiv PDF, SSRF, Wayback and input validation.
+- `npm run live`: per-source diagnostics.
