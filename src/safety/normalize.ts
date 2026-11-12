@@ -1,3 +1,5 @@
+import { percentDecodeAll } from "../util/text.js";
+
 const LEET: Record<string, string> = {
   "0": "o",
   "1": "i",
@@ -21,10 +23,53 @@ const HAS_FORMAT_CHARS = /[\p{Cf}ᅟᅠ឴឵ㅤﾠ]/u;
 const COMBINING_MARKS = /\p{M}/gu;
 
 /**
- * Cyrillic and Greek letters that look like Latin ones ("pоrn" with a Cyrillic "о"). Text is
- * lowercased first, so this also covers uppercase look-alikes such as Cyrillic "В", "Н", "М".
+ * Letters that look like Latin ones ("pоrn" with a Cyrillic "о"): Cyrillic, Greek, Armenian, Latin
+ * small capitals and IPA letters. Text is lowercased first, so uppercase look-alikes such as Cyrillic
+ * "В", "Н", "М" are covered too. (Fullwidth and mathematical letters are already folded by NFKD.)
  */
 const CONFUSABLES: Record<string, string> = {
+  // Latin small capitals and IPA / dotless letters
+  ı: "i",
+  ȷ: "j",
+  ᴀ: "a",
+  ʙ: "b",
+  ᴄ: "c",
+  ᴅ: "d",
+  ᴇ: "e",
+  ꜰ: "f",
+  ɢ: "g",
+  ʜ: "h",
+  ɪ: "i",
+  ᴊ: "j",
+  ᴋ: "k",
+  ʟ: "l",
+  ᴍ: "m",
+  ɴ: "n",
+  ᴏ: "o",
+  ᴘ: "p",
+  ʀ: "r",
+  ꜱ: "s",
+  ᴛ: "t",
+  ᴜ: "u",
+  ᴠ: "v",
+  ᴡ: "w",
+  ʏ: "y",
+  ᴢ: "z",
+  ɑ: "a",
+  ɡ: "g",
+  ɩ: "i",
+  // Armenian
+  օ: "o",
+  ս: "u",
+  հ: "h",
+  ո: "n",
+  ց: "g",
+  զ: "q",
+  ա: "w",
+  // Cyrillic and Greek
+  һ: "h",
+  ϲ: "c",
+  ϳ: "j",
   а: "a",
   в: "b",
   е: "e",
@@ -66,14 +111,10 @@ const CONFUSABLE_CHARS = new RegExp(`[${Object.keys(CONFUSABLES).join("")}]`, "g
  * invisible characters removed, URL-ish separators turned into spaces, single spaces.
  */
 export function normalizeText(input: string): string {
-  let text = input.replace(FORMAT_CHARS, "");
-  try {
-    // Percent-encoded URLs ("child%20porn") must not slip through
-    if (/%[0-9a-f]{2}/i.test(text)) text = decodeURIComponent(text.replace(/%(?![0-9a-f]{2})/gi, "%25"));
-  } catch {
-    // Keep the raw text if it is not valid percent-encoding
-  }
-  return text
+  // Decode first ("child%20porn", even next to an invalid "%FF"), then drop invisible characters,
+  // which may themselves have been percent-encoded ("bo%E2%80%8Bmb")
+  return percentDecodeAll(input)
+    .replace(FORMAT_CHARS, "")
     .normalize("NFKD")
     .replace(COMBINING_MARKS, "")
     .toLowerCase()
@@ -109,7 +150,8 @@ export function textVariants(input: string): string[] {
       variants.add(leetVariant(form));
     }
   };
-  add(normalizeText(input)); // "p​thc" → "pthc"
-  if (HAS_FORMAT_CHARS.test(input)) add(normalizeText(input.replace(FORMAT_CHARS, " "))); // "teen​nudes" → "teen nudes"
+  const decoded = percentDecodeAll(input);
+  add(normalizeText(decoded)); // "p​thc" → "pthc"
+  if (HAS_FORMAT_CHARS.test(decoded)) add(normalizeText(decoded.replace(FORMAT_CHARS, " "))); // "teen​nudes" → "teen nudes"
   return [...variants];
 }

@@ -33,6 +33,28 @@ export function decodeEntities(text: string): string {
   });
 }
 
+const PERCENT_RUN = /(?:%[0-9a-f]{2})+/gi;
+const utf8 = new TextDecoder("utf-8", { fatal: false });
+
+/**
+ * Lenient percent-decoding, repeated until stable (double/triple/… encoding): every run of %XX bytes
+ * is decoded on its own, so one invalid byte ("%FF") cannot switch decoding off for the rest of the
+ * string, as decodeURIComponent would. Invalid sequences become U+FFFD.
+ */
+export function percentDecodeAll(input: string, maxRounds = 8): string {
+  let current = input;
+  for (let round = 0; round < maxRounds && current.includes("%"); round++) {
+    const next = current.replace(PERCENT_RUN, run => {
+      const bytes = new Uint8Array(run.length / 3);
+      for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(run.slice(i * 3 + 1, i * 3 + 3), 16);
+      return utf8.decode(bytes);
+    });
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
+
 /** Longest input stripTags looks at: it feeds snippets of at most a few hundred characters. */
 const STRIP_INPUT_LIMIT = 20_000;
 

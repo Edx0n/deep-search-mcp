@@ -164,7 +164,10 @@ export async function runSearch(
             const dark = isDark(result);
             const channel: Channel = dark ? "darkweb" : source.channel;
             let reason: HiddenReason | null = null;
-            if (dark && (deps.banned.isBanned(hostOf(result.url)) || deps.banned.anyBanned(result.url))) reason = "ahmia_blacklist";
+            // Ahmia's own results are already filtered upstream; links to onions found by other sources are
+            // only shown once the blacklist has cleared them (fail-closed)
+            const unchecked = dark && !deps.banned.loaded && source.channel !== "darkweb";
+            if (unchecked || (dark && (deps.banned.isBanned(hostOf(result.url)) || deps.banned.anyBanned(result.url)))) reason = "ahmia_blacklist";
             else reason = deps.guard.classify(resultText(result, channel), channel);
             if (reason) {
               hidden++;

@@ -249,6 +249,19 @@ describe("evasion attempts", () => {
     expect(guard.checkQuery("teenㅤnudes").get("web")).toBe("csam");
   });
 
+  it("decodes URLs leniently: one invalid byte or an encoded invisible character changes nothing", () => {
+    expect(guard.classify("https://x.example/child%20porn/?x=%FF", "web")).toBe("csam");
+    expect(guard.classify("https://x.example/how-to-make-a-pipe-bo%E2%80%8Bmb", "web")).toBe("mass_harm");
+    expect(guard.checkQuery("chi%C2%ADld%20porn").get("web")).toBe("csam");
+  });
+
+  it("reads more look-alikes: dotless i, small capitals, Armenian, Latin alpha", () => {
+    expect(guard.checkQuery("chıld porn").get("web")).toBe("csam");
+    expect(guard.checkQuery("ᴄhild porn").get("web")).toBe("csam");
+    expect(guard.checkQuery("how to make a pipe bօmb").get("web")).toBe("mass_harm");
+    expect(guard.checkQuery("how to make ɑnthrax").get("web")).toBe("mass_harm");
+  });
+
   it("screens hostile long input quickly (bounded quantifiers)", () => {
     const start = performance.now();
     guard.checkDocument("детск".repeat(20_000), "web");
@@ -282,6 +295,13 @@ describe("onion addresses hidden in other URLs", () => {
     expect(embeddedOnions(`https://${v3}.tor2web.example/page`)).toEqual([`${v3}.onion`]);
     expect(embeddedOnions(`https://${v3}-tor2web-example.translate.goog/`)).toEqual([`${v3}.onion`]);
     expect(embeddedOnions(`https://example.com/${"q".repeat(55)}x.pdf`)).toEqual([]);
+  });
+
+  it("survives invalid bytes, deep encoding and path-style proxies", () => {
+    expect(embeddedOnions(`https://web.archive.org/web/2020/http://${addr}%2Eonion/?x=%FF`)).toEqual([`${addr}.onion`]);
+    expect(embeddedOnions(`https://web.archive.org/web/2020/http://${addr}%2525252Eonion/`)).toEqual([`${addr}.onion`]);
+    const v3 = `${"q".repeat(55)}d`;
+    expect(embeddedOnions(`https://gw.example/${v3}/page`)).toEqual([`${v3}.onion`]);
   });
 
   it("checks them against the blacklist", () => {

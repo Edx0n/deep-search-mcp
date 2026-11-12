@@ -2,7 +2,8 @@
  * Hosts of scholarly publishers, moderated preprint servers and research indexes. Pages and PDFs
  * served from them are screened with the "academic" rules: research ABOUT abuse, trafficking or the
  * dark web must stay readable, and these hosts do not serve abusive material. Open upload
- * repositories (Zenodo, Figshare, OSF, Dataverse) are deliberately NOT listed: anyone can post there.
+ * repositories (Zenodo, Figshare, OSF, Dataverse) and sites with public user content (OpenReview
+ * comments, PhilPapers submissions) are deliberately NOT listed: anyone can post there.
  */
 const SCHOLARLY_DOMAINS = [
   // Moderated preprint servers and open-access indexes
@@ -18,9 +19,7 @@ const SCHOLARLY_DOMAINS = [
   "doaj.org",
   "openalex.org",
   "semanticscholar.org",
-  "philpapers.org",
   "scholar.archive.org",
-  "openreview.net",
   "aclanthology.org",
   "proceedings.mlr.press",
   "neurips.cc",

@@ -352,8 +352,9 @@ const massHarm: Category = {
   description: "How-to material for bombs, explosives and chemical/biological weapons.",
   locked: true,
   rules: [
-    rule(`\\bhow (?:to|do i|can i|do you|would i)\\W+${MAKE}\\b${gapOf(3)}${MASS_HARM}\\b`, OPEN, OPEN),
-    rule(`\\b(?:como|comment) (?:se )?${MAKE}\\b${gapOf(3)}${MASS_HARM}\\b`, OPEN, OPEN),
+    // \W+ between words also catches URL slugs ("how-to-make-a-pipe-bomb")
+    rule(`\\bhow\\W+(?:to|do\\W+i|can\\W+i|do\\W+you|would\\W+i)\\W+${MAKE}\\b${gapOf(3)}${MASS_HARM}\\b`, OPEN, OPEN),
+    rule(`\\b(?:como|comment)\\W+(?:se\\W+)?${MAKE}\\b${gapOf(3)}${MASS_HARM}\\b`, OPEN, OPEN),
     rule(
       near(MASS_HARM, alt("recipes?", "manuals?", "tutorials?", "instructions?", "cookbooks?", "blueprints?", "synthesis", "receitas?", "tutoriais", "instrucoes", "recetas?", "instrucciones"), 1),
       OPEN,

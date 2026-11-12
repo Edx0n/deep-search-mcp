@@ -1,5 +1,10 @@
 import { load, type CheerioAPI } from "cheerio";
-import { collapse } from "../util/text.js";
+import { clip, collapse } from "../util/text.js";
+
+export const MAX_TITLE_CHARS = 300;
+export const MAX_DESCRIPTION_CHARS = 1000;
+/** Same as the longest URL deepsearch_fetch_page accepts. */
+export const MAX_LINK_CHARS = 2048;
 
 export interface ExtractedLink {
   text: string;
@@ -174,10 +179,13 @@ function isUsefulHref(href: string): boolean {
 /** Converts an HTML page to readable text (headings, lists, paragraphs) plus its outgoing links. */
 export function extractHtml(html: string, baseUrl: string, maxLinks = 80): ExtractedPage {
   const $ = load(html);
-  const title = collapse($("title").first().text()) || $("meta[property='og:title']").attr("content")?.trim() || undefined;
-  const description =
-    $("meta[name='description']").attr("content")?.trim() || $("meta[property='og:description']").attr("content")?.trim() || undefined;
-  const language = $("html").attr("lang")?.trim() || undefined;
+  // Metadata is clipped: a multi-megabyte <title> must not escape the output and screening limits
+  const title = clip(collapse($("title").first().text()) || $("meta[property='og:title']").attr("content") || "", MAX_TITLE_CHARS);
+  const description = clip(
+    $("meta[name='description']").attr("content") || $("meta[property='og:description']").attr("content") || "",
+    MAX_DESCRIPTION_CHARS
+  );
+  const language = $("html").attr("lang")?.trim().slice(0, 35) || undefined;
 
   // Links come from the whole page (navigation included): they are how an investigation moves on.
   const links: ExtractedLink[] = [];
@@ -185,7 +193,7 @@ export function extractHtml(html: string, baseUrl: string, maxLinks = 80): Extra
   $("a[href]").each((_, el) => {
     if (links.length >= maxLinks) return;
     const href = $(el).attr("href");
-    if (!href || !isUsefulHref(href)) return;
+    if (!href || href.length > MAX_LINK_CHARS || !isUsefulHref(href)) return;
     let url: string;
     try {
       const u = new URL(href, baseUrl);
@@ -195,6 +203,7 @@ export function extractHtml(html: string, baseUrl: string, maxLinks = 80): Extra
     } catch {
       return;
     }
+    if (url.length > MAX_LINK_CHARS) return; // deepsearch_fetch_page would not open it anyway
     if (seen.has(url)) return;
     seen.add(url);
     links.push({ text: collapse($(el).text()).slice(0, 120) || url, url });

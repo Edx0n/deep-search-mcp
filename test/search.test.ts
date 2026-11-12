@@ -136,6 +136,18 @@ describe("runSearch", () => {
     expect(out.safety.by_reason).toMatchObject({ ahmia_blacklist: 1, csam: 1 });
   });
 
+  it("hides onion links from web sources while the blacklist is unavailable (fail-closed)", async () => {
+    const d = deps();
+    const unavailable = new BannedOnionList(d.http, null);
+    unavailable.ensure = async () => false;
+    const web = fakeSource("wiby", "web", "web", () => ({
+      results: [r("wiby", "Mirror", `https://${"m".repeat(55)}d.onion.ly/`), r("wiby", "Essay", "https://essay.example/")]
+    }));
+    const out = await runSearch({ query: "anything", limit_per_source: 5, offset: 0 }, { ...d, banned: unavailable }, undefined, [web]);
+    expect(out.results.map(x => x.url)).toEqual(["https://essay.example/"]);
+    expect(out.sources[0]?.note).toMatch(/blacklist unavailable/);
+  });
+
   it("reports a failing source without failing the search", async () => {
     const broken: Source = { ...academicB, search: async () => Promise.reject(new Error("upstream down")) };
     const out = await runSearch({ query: "x", scopes: ["academic"], limit_per_source: 5, offset: 0 }, deps(), undefined, [academicA, broken]);

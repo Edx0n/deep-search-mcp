@@ -19,8 +19,13 @@ export interface PdfLimits {
   budgetMs: number;
   /** Hard limit: the worker is terminated after this long. */
   timeoutMs: number;
-  /** Heap limit of the worker; exceeding it kills the worker, never the server. */
+  /** JavaScript heap limit of the worker; exceeding it kills the worker, never the server. */
   maxHeapMb: number;
+  /**
+   * Process memory growth allowed while the worker runs. pdf.js keeps decompressed streams in buffers
+   * outside the JavaScript heap, so the parent watches the whole process and kills the worker past this.
+   */
+  maxRssGrowthMb: number;
 }
 
 export const PDF_LIMITS: PdfLimits = {
@@ -28,7 +33,8 @@ export const PDF_LIMITS: PdfLimits = {
   maxChars: 2_000_000,
   budgetMs: 20_000,
   timeoutMs: 30_000,
-  maxHeapMb: 512
+  maxHeapMb: 256,
+  maxRssGrowthMb: 512
 };
 
 /**
@@ -76,7 +82,7 @@ const { getDocumentProxy } = require(${JSON.stringify(unpdfPath)});
   let title;
   try {
     const meta = await pdf.getMetadata();
-    if (meta && meta.info && typeof meta.info.Title === "string" && meta.info.Title.trim()) title = meta.info.Title.trim();
+    if (meta && meta.info && typeof meta.info.Title === "string" && meta.info.Title.trim()) title = meta.info.Title.trim().slice(0, 300);
   } catch {}
   parentPort.postMessage({ ok: true, text: parts.join("\\n\\n"), pages: total, pagesRead: read, truncated, title });
 })().catch(error => parentPort.postMessage({ ok: false, error: String((error && error.message) || error) }));
@@ -84,16 +90,29 @@ const { getDocumentProxy } = require(${JSON.stringify(unpdfPath)});
 }
 
 let source: string | undefined;
+let queue: Promise<unknown> = Promise.resolve();
 
-/** Extracts the text layer of a PDF in an isolated, resource-limited worker thread. */
+/**
+ * Extracts the text layer of a PDF in an isolated, resource-limited worker thread. PDFs are processed
+ * one at a time, so parallel tool calls cannot multiply the memory budget.
+ */
 export function extractPdf(bytes: Uint8Array, limits: PdfLimits = PDF_LIMITS): Promise<ExtractedPdf> {
+  const run = () => runWorker(bytes, limits);
+  const result = queue.then(run, run);
+  queue = result.catch(() => undefined);
+  return result;
+}
+
+function runWorker(bytes: Uint8Array, limits: PdfLimits): Promise<ExtractedPdf> {
   source ??= workerSource(createRequire(import.meta.url).resolve("unpdf"));
   return new Promise<ExtractedPdf>((resolve, reject) => {
     let settled = false;
+    const baseline = process.memoryUsage.rss();
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(watchdog);
       fn();
       void worker.terminate();
     };
@@ -106,6 +125,12 @@ export function extractPdf(bytes: Uint8Array, limits: PdfLimits = PDF_LIMITS): P
       () => finish(() => reject(new Error(`it took longer than ${Math.round(limits.timeoutMs / 1000)}s to process`))),
       limits.timeoutMs
     );
+    // The heap limit does not cover pdf.js's decompression buffers: watch the whole process instead
+    const watchdog = setInterval(() => {
+      if (process.memoryUsage.rss() - baseline > limits.maxRssGrowthMb * 1024 * 1024) {
+        finish(() => reject(new Error(`it needs more than ${limits.maxRssGrowthMb} MB of memory`)));
+      }
+    }, 50);
     worker.once("message", (message: { ok: boolean; error?: string } & Partial<ExtractedPdf>) => {
       finish(() =>
         message.ok

@@ -303,7 +303,7 @@ The filter is a core part of the project and **cannot be switched off entirely**
 - **Tor all the way**: once a request enters Tor, every redirect stays on Tor, so an onion page cannot bounce you to the clear web and reveal your IP. `.onion` names are resolved by Tor, never by your DNS.
 - **Keys stay home**: API keys and cookies are never forwarded when a redirect leaves the original domain, and error messages never include URLs that could carry keys.
 - **Untrusted content is labeled**: page text is marked as third-party data, a basic defense against prompt injection.
-- **Hostile files can't take the server down**: PDFs are parsed in an isolated worker thread with page, text, time and memory limits; HTML and metadata are processed with linear-time code, so crafted content cannot freeze the server.
+- **Hostile files can't take the server down**: PDFs are parsed one at a time in an isolated worker thread with page, text, time and memory limits (including a watchdog on decompression buffers); HTML, titles and metadata are clipped and processed with linear-time code, so crafted content cannot freeze the server.
 - **No evasion of others' defenses**: the client identifies itself as `deep-search-mcp` on the clear web and never solves or bypasses CAPTCHAs or bot checks. Over Tor it uses the Tor Browser User-Agent, to stay in its anonymity set.
 - **A refusal is final**: tool descriptions tell the model not to rephrase a query to get around a refusal.
 
@@ -419,6 +419,8 @@ Design notes and trade-offs: [`docs/DESIGN.md`](docs/DESIGN.md).
 - **Ahmia**: broad queries return thousands of results and take around 10 seconds. Onion services are often slow or offline.
 - **Strict on the open web**: clear-web pages *about* child abuse (news, encyclopedias) are withheld as well. Use the `academic` scope to research the subject.
 - **Scanned PDFs** without a text layer (no OCR) yield no text.
+- **Tor fingerprint**: requests over Tor use Tor Browser's User-Agent and language, but not its full set and order of headers, so an onion operator could tell this tool apart from a browser. That never reveals your IP; for anonymity-critical browsing, use Tor Browser itself.
+- **Filters are keyword-based**: they handle accents, leetspeak, invisible characters, look-alike letters and URL encoding, but deliberate misspellings and new slang can still slip through. Ahmia's own filtering and its blacklist remain the main defense on the dark web.
 
 <details>
 <summary><b>Sources considered but not included</b></summary>

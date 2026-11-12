@@ -108,10 +108,16 @@ export async function archivedVersions(input: ArchiveInput, deps: SearchDeps, si
   let snapshots = parseCdx(rows);
   if (input.newest_first) snapshots = snapshots.reverse();
 
+  // Captures can lead to onion services even when the query did not (e.g. match=domain on a gateway):
+  // load the blacklist for them, and hide them if it cannot be loaded (fail-closed)
+  const leadsToOnion = (s: Snapshot) => onions.size > 0 || isOnionHost(hostOfTarget(s.original_url)) || embeddedOnions(s.original_url).length > 0;
+  const listReady = snapshots.some(leadsToOnion) ? await deps.banned.ensure(signal) : deps.banned.loaded;
   let hidden = 0;
   snapshots = snapshots.filter(s => {
-    const dark = onions.size > 0 || embeddedOnions(s.original_url).length > 0;
-    const blocked = (dark && deps.banned.anyBanned(s.original_url)) || deps.guard.classify(s.original_url, dark ? "darkweb" : "web");
+    const dark = leadsToOnion(s);
+    const blocked =
+      (dark && (!listReady || deps.banned.isBanned(hostOfTarget(s.original_url)) || deps.banned.anyBanned(s.original_url))) ||
+      deps.guard.classify(s.original_url, dark ? "darkweb" : "web");
     if (blocked) hidden++;
     return !blocked;
   });

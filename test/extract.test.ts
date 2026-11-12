@@ -75,6 +75,17 @@ describe("hostile HTML stays cheap (no catastrophic backtracking)", () => {
     expect(performance.now() - start).toBeLessThan(1000);
   });
 
+  it("clips giant titles and descriptions and skips absurdly long links", () => {
+    const page = extractHtml(
+      `<title>${"t".repeat(3_000_000)}</title><meta name="description" content="${"d".repeat(3_000_000)}">` +
+        `<body><a href="https://a.example/${"x".repeat(5000)}">long</a><a href="/ok">ok</a></body>`,
+      "https://a.example/"
+    );
+    expect(page.title!.length).toBeLessThanOrEqual(300);
+    expect(page.description!.length).toBeLessThanOrEqual(1000);
+    expect(page.links.map(l => l.url)).toEqual(["https://a.example/ok"]);
+  });
+
   it("handles a huge run of spaces inside <pre>", () => {
     const start = performance.now();
     extractHtml(`<pre>${" ".repeat(300_000)}x\n${" ".repeat(300_000)}</pre>`, "https://a.example/");
@@ -134,6 +145,15 @@ describe("PDF extraction in an isolated worker", () => {
 
   it("rejects garbage without crashing the process", async () => {
     await expect(extractPdf(new TextEncoder().encode("%PDF-1.4 not really a pdf"))).rejects.toThrow();
+  });
+
+  it("kills the worker when process memory grows past the limit (covers buffers outside the heap)", async () => {
+    await expect(extractPdf(makePdf(5), { ...PDF_LIMITS, maxRssGrowthMb: 1 })).rejects.toThrow(/more than 1 MB of memory/);
+  });
+
+  it("processes PDFs one at a time without losing any", async () => {
+    const results = await Promise.all([extractPdf(makePdf(1)), extractPdf(makePdf(2)), extractPdf(makePdf(3))]);
+    expect(results.map(r => r.pages)).toEqual([1, 2, 3]);
   });
 });
 
@@ -201,6 +221,23 @@ describe("blacklist on every path to an onion service (no network needed: refuse
   it("refuses to list archived captures of a banned onion", async () => {
     const input = { url: `${banned}.onion.ly/page`, match: "exact" as const, limit: 5, newest_first: true, only_successful: true };
     await expect(archivedVersions(input, deps())).rejects.toBeInstanceOf(SafetyRefusal);
+  });
+
+  it("hides archived captures that lead to onions when the blacklist cannot be loaded", async () => {
+    const v3 = `${"k".repeat(55)}d`;
+    const cdxRows = [
+      ["timestamp", "original", "mimetype", "statuscode", "length"],
+      ["20200101000000", `https://${v3}.onion.ly/`, "text/html", "200", "100"],
+      ["20200101000000", "https://plain.example/", "text/html", "200", "100"]
+    ];
+    const config = loadConfig({}).config;
+    const http = { torEnabled: false, getJson: async () => cdxRows } as unknown as HttpClient;
+    const unavailable = new BannedOnionList(http, null);
+    unavailable.ensure = async () => false;
+    const deps: SearchDeps = { config, http, cache: new TtlCache<unknown>(1000), guard: new SafetyGuard(), banned: unavailable };
+    const out = await archivedVersions({ url: "onion.ly", match: "domain", limit: 5, newest_first: false, only_successful: true }, deps);
+    expect(out.snapshots.map(s => s.original_url)).toEqual(["https://plain.example/"]);
+    expect(out.hidden).toBe(1);
   });
 
   it("fails closed when the blacklist cannot be loaded", async () => {

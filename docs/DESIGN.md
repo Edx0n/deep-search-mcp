@@ -69,7 +69,9 @@ src/
 - **Rules target transactions, not topics**. "buy cocaine" is filtered; "darknet drug markets research" is not. A false-positive test suite protects cases such as "bath bomb", "bomba d'água", "Al Gore", "drug delivery", "Lolita (Nabokov)", "cp command" and "recover hacked Instagram account".
 - **Ahmia's blacklist**: MD5 of the `.onion` domain (the same computation as Ahmia's own code). Opening any `.onion` page requires the list to be loaded (fail-closed).
 - **Embedded onion addresses**: `embeddedOnions()` finds v3 addresses anywhere in a URL (`<addr>.onion.ly`, `<addr>-onion-ly.translate.goog`, `web.archive.org/web/…/http://<addr>.onion/`). Search results, fetched pages, extracted links and archive lookups that lead to an onion service get the blacklist check and the dark web rules, whichever source produced them.
-- **Normalization against evasion**: invisible format characters are read both as removed and as word breaks; Cyrillic/Greek look-alike letters get a Latin reading; leetspeak gets a decoded reading. Rules run on every variant, and plain ASCII text keeps a single variant.
+- **Normalization against evasion**: text is first percent-decoded leniently and repeatedly (each `%XX` run on its own, so one invalid `%FF` cannot switch decoding off); then invisible format characters (`\p{Cf}`) are read both as removed and as word breaks, combining marks (`\p{M}`) are dropped after NFKD, look-alike letters (Cyrillic, Greek, Armenian, small capitals, IPA) get a Latin reading and leetspeak gets a decoded reading. Rules run on every variant, and plain ASCII text keeps a single variant.
+- **Onion detection** covers explicit `.onion` names, gateway host labels and path-style proxies (any bounded 56-character base32 token ending in "d", the v3 version byte), in raw and decoded form. An attacker-run proxy that re-encodes the address cannot be recognized; the page content still goes through the dark web rules only when the address is visible, so such proxies are a known limit.
+- **Fail-closed everywhere it matters**: onion pages are never opened, archived captures that lead to onions are hidden, and onion links found by non-Ahmia sources are hidden whenever the blacklist cannot be loaded. (Ahmia's own results are already filtered upstream.)
 
 ## Network privacy and secrets
 
@@ -81,7 +83,8 @@ src/
 
 ## Resource limits (hostile content)
 
-- **PDFs** are parsed in a worker thread (`src/extract/pdf.ts`) with at most 300 pages, 2,000,000 characters, a 20 s soft and 30 s hard time limit and a 512 MB heap. A hostile PDF can only kill that worker. Only the text layer is read (no font faces, no system fonts, no XFA), pdf.js logs errors only, and the worker's `console` goes to stderr, because stdout carries the MCP protocol.
+- **PDFs** are parsed one at a time in a worker thread (`src/extract/pdf.ts`) with at most 300 pages, 2,000,000 characters, a 20 s soft and 30 s hard time limit and a 256 MB heap. pdf.js keeps decompressed streams outside the JavaScript heap, so the parent also watches process memory every 50 ms and kills the worker past 512 MB of growth. A hostile PDF can only kill that worker. Only the text layer is read (no font faces, no system fonts, no XFA), pdf.js logs errors only, and the worker's `console` goes to stderr, because stdout carries the MCP protocol.
+- **Titles and descriptions** are clipped at extraction (300 and 1,000 characters) and links longer than 2,048 characters are skipped, so page metadata cannot escape the output and screening limits.
 - **Text from any page** is capped at 2,000,000 characters before screening and pagination.
 - **Linear-time processing**: table-separator trimming and `<pre>` whitespace use plain loops instead of backtracking regexes, `stripTags` uses `[^<>]` on input capped at 20,000 characters, and the safety rules use bounded quantifiers.
 - **Scholarly hosts are an explicit list of registered domains** (including each SciELO national site): a host that merely contains a familiar label never switches the strict rules off.

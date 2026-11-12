@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { HttpClient } from "../http/client.js";
+import { percentDecodeAll } from "../util/text.js";
 
 /**
  * Ahmia publishes the MD5 hashes of every onion domain it has banned for abuse content
@@ -57,31 +58,19 @@ export function parseBannedList(text: string): Set<string> {
  */
 const ONION_V3 = /(?<![a-z2-7])([a-z2-7]{56})[.-]onion(?![a-z0-9])/gi;
 /**
- * A v3 address used as a host label without any "onion" in sight ("<addr>.tor2web.example"):
- * 56 base32 characters ending in "d" (the encoded version byte 3), followed by "." or "-".
+ * A v3 address anywhere, without any "onion" in sight: as a gateway host label ("<addr>.tor2web.example")
+ * or as a path segment of a proxy ("https://gw.example/<addr>/"). v3 addresses are exactly 56 base32
+ * characters and always end in "d" (the encoded version byte 3).
  */
-const V3_LABEL = /(?<![a-z2-7])([a-z2-7]{55}d)(?=[.-])/gi;
-
-/** The text plus up to three rounds of percent-decoding ("%2Eonion", double-encoded "%252E"…). */
-function decodedForms(text: string): string[] {
-  const forms = [text];
-  let current = text;
-  for (let round = 0; round < 3 && /%[0-9a-f]{2}/i.test(current); round++) {
-    try {
-      current = decodeURIComponent(current.replace(/%(?![0-9a-f]{2})/gi, "%25"));
-    } catch {
-      break;
-    }
-    forms.push(current);
-  }
-  return forms;
-}
+const V3_ANYWHERE = /(?<![a-z2-7])([a-z2-7]{55}d)(?![a-z2-7])/gi;
 
 export function embeddedOnions(text: string): string[] {
   const found = new Set<string>();
-  for (const form of decodedForms(text.slice(0, 20_000))) {
+  const raw = text.slice(0, 20_000);
+  // Raw and leniently percent-decoded forms ("%2Eonion", "%252E…", even next to an invalid "%FF")
+  for (const form of new Set([raw, percentDecodeAll(raw)])) {
     for (const match of form.matchAll(ONION_V3)) found.add(`${match[1]!.toLowerCase()}.onion`);
-    for (const match of form.matchAll(V3_LABEL)) found.add(`${match[1]!.toLowerCase()}.onion`);
+    for (const match of form.matchAll(V3_ANYWHERE)) found.add(`${match[1]!.toLowerCase()}.onion`);
   }
   return [...found];
 }
