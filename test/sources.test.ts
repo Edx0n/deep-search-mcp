@@ -44,6 +44,13 @@ describe("helpers", () => {
     expect(stripTags("<jats:p>Caf&eacute; &amp; <b>bar</b> &#233;</jats:p>")).toBe("Caf&eacute; & bar é");
   });
 
+  it("strips tags in linear time on hostile descriptions", () => {
+    const start = performance.now();
+    stripTags("<".repeat(200_000));
+    stripTags("<script".repeat(50_000));
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
   it("de-duplicates author names written in different orders", () => {
     expect(authorsList(["Liliana Pena Naval", "Naval, Liliana Pena", "José Souza", "Souza, José", " "])).toEqual(["Liliana Pena Naval", "José Souza"]);
   });

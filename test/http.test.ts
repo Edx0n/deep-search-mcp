@@ -1,18 +1,33 @@
 import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig, parseTorProxy } from "../src/config.js";
-import { HttpClient, HttpError } from "../src/http/client.js";
+import { HttpClient, HttpError, withoutCredentials } from "../src/http/client.js";
 import { assertPublicHost, isPrivateAddress } from "../src/http/ssrf.js";
 
 const ONION = "b".repeat(56) + ".onion";
+const ONION_2 = "c".repeat(56) + ".onion";
 
 describe("SSRF guard", () => {
-  it.each(["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.0.10", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1", "::ffff:7f00:1"])(
-    "treats %s as private",
-    ip => expect(isPrivateAddress(ip)).toBe(true)
-  );
+  it.each([
+    "127.0.0.1",
+    "10.1.2.3",
+    "172.20.0.1",
+    "192.168.0.10",
+    "169.254.169.254",
+    "100.64.0.1",
+    "0.0.0.0",
+    "::1",
+    "fe80::1",
+    "fd00::1",
+    "fec0::1",
+    "::7f00:1",
+    "::ffff:127.0.0.1",
+    "::ffff:7f00:1",
+    "64:ff9b::7f00:1",
+    "64:ff9b::a9fe:a9fe"
+  ])("treats %s as private", ip => expect(isPrivateAddress(ip)).toBe(true));
 
-  it.each(["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"])("treats %s as public", ip => expect(isPrivateAddress(ip)).toBe(false));
+  it.each(["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "64:ff9b::808:808"])("treats %s as public", ip => expect(isPrivateAddress(ip)).toBe(false));
 
   it("rejects local host names and private IP literals", () => {
     expect(() => assertPublicHost(new URL("http://localhost:3000/"))).toThrow(/local/);
@@ -113,6 +128,10 @@ describe("routing through Tor (SOCKS5)", () => {
   beforeAll(async () => {
     fake = await startFakeTor(call => {
       if (call.request.startsWith("GET /redirect")) return httpResponse("302 Found", "", `Location: http://${ONION}/final\r\n`);
+      if (call.request.startsWith("GET /to-clearnet")) return httpResponse("302 Found", "", "Location: http://example.com/landing\r\n");
+      if (call.request.startsWith("GET /cross-origin")) return httpResponse("302 Found", "", `Location: http://${ONION_2}/landing\r\n`);
+      if (call.request.startsWith("GET /same-origin")) return httpResponse("302 Found", "", "Location: /landing-same\r\n");
+      if (call.request.startsWith("GET /to-local")) return httpResponse("302 Found", "", "Location: http://127.0.0.1/admin\r\n");
       if (call.request.startsWith("GET /big")) return httpResponse("200 OK", "x".repeat(5000));
       return httpResponse("200 OK", `<h1>hello from ${call.host}</h1>`);
     });
@@ -132,7 +151,13 @@ describe("routing through Tor (SOCKS5)", () => {
     expect(call.atyp).toBe(0x03);
     expect(call.host).toBe(ONION);
     expect(call.port).toBe(80);
-    expect(call.request).toMatch(/user-agent: Mozilla\/5\.0 \(Windows NT 10\.0; rv:128\.0\)/i);
+    expect(call.request).toMatch(/user-agent: Mozilla\/5\.0 \(Windows NT 10\.0; rv:140\.0\)/i);
+    expect(call.request).toMatch(/accept-language: en-US,en;q=0\.5/i);
+  });
+
+  it("still refuses private addresses on hops forced through Tor", async () => {
+    await expect(http.request(`http://${ONION}/to-local`)).rejects.toMatchObject({ kind: "blocked" });
+    expect(fake.calls.some(c => c.host === "127.0.0.1" || c.atyp === 0x01)).toBe(false);
   });
 
   it("follows redirects hop by hop", async () => {
@@ -152,6 +177,29 @@ describe("routing through Tor (SOCKS5)", () => {
     const truncated = await http.request(`http://${ONION}/big`, { maxBytes: 1000, truncate: true });
     expect(truncated.truncated).toBe(true);
     expect(truncated.body.byteLength).toBe(1000);
+  });
+
+  it("stays on Tor when an onion service redirects to the clear web (no IP leak)", async () => {
+    const response = await http.request(`http://${ONION}/to-clearnet`);
+    expect(response.url).toBe("http://example.com/landing");
+    expect(response.viaTor).toBe(true);
+    // The clear-web hop went through the proxy too, by name
+    expect(fake.calls.at(-1)).toMatchObject({ atyp: 0x03, host: "example.com", port: 80 });
+  });
+
+  it("drops API keys and cookies when a redirect leaves the origin", async () => {
+    const headers = { authorization: "Bearer SECRET-1", "x-api-key": "SECRET-2", cookie: "s=SECRET-3" };
+    await http.request(`http://${ONION}/cross-origin`, { headers });
+    const [first, second] = fake.calls.slice(-2);
+    expect(first!.request).toContain("SECRET-1");
+    expect(second!.host).toBe(ONION_2);
+    expect(second!.request).not.toMatch(/SECRET/);
+  });
+
+  it("keeps them on same-origin redirects", async () => {
+    await http.request(`http://${ONION}/same-origin`, { headers: { authorization: "Bearer SECRET-1" } });
+    expect(fake.calls.at(-1)!.request).toContain("SECRET-1");
+    expect(withoutCredentials({ Authorization: "a", "X-Api-Key": "b", "API-Key": "c", accept: "d" })).toEqual({ accept: "d" });
   });
 
   it("explains when the Tor proxy is down", async () => {

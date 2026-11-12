@@ -24,12 +24,18 @@ export interface Config {
   torTimeoutMs: number;
   /** User-Agent for API calls. Generic on purpose: it identifies the software, not the user. */
   userAgent: string;
-  /** User-Agent for HTML pages (Tor Browser's, so Tor traffic blends in). */
-  browserUserAgent: string;
+  /** User-Agent over Tor: Tor Browser's, so the traffic blends into its anonymity set. */
+  torUserAgent: string;
   cacheTtlMs: number;
 }
 
 export const VERSION = "0.1.0";
+
+/**
+ * Tor Browser's User-Agent (Firefox ESR base, always reported as Windows). Update it, or set
+ * DEEP_SEARCH_TOR_USER_AGENT, when Tor Browser moves to a new ESR, or this client stands out.
+ */
+export const TOR_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; rv:140.0) Gecko/20100101 Firefox/140.0";
 
 const DEFAULTS = {
   timeoutMs: 20_000,
@@ -121,7 +127,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): { config: Conf
     timeoutMs: positiveInt(env.DEEP_SEARCH_TIMEOUT_MS, DEFAULTS.timeoutMs, "DEEP_SEARCH_TIMEOUT_MS", warnings),
     torTimeoutMs: positiveInt(env.DEEP_SEARCH_TOR_TIMEOUT_MS, DEFAULTS.torTimeoutMs, "DEEP_SEARCH_TOR_TIMEOUT_MS", warnings),
     userAgent: `deep-search-mcp/${VERSION}`,
-    browserUserAgent: "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0",
+    torUserAgent: optional(env.DEEP_SEARCH_TOR_USER_AGENT) ?? TOR_BROWSER_USER_AGENT,
     cacheTtlMs: DEFAULTS.cacheTtlMs
   };
   return { config, warnings };

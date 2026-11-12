@@ -90,6 +90,12 @@ function discard(body: Dispatcher.ResponseData["body"]): void {
   body.destroy();
 }
 
+const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "x-subscription-token"]);
+
+export function withoutCredentials(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => !CREDENTIAL_HEADERS.has(name.toLowerCase())));
+}
+
 function toHeaders(raw: Record<string, string | string[] | undefined>): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(raw)) {
@@ -136,13 +142,15 @@ export class HttpClient {
     if (url.username || url.password) throw new HttpError("URLs with embedded credentials are not allowed.", "blocked");
     const onion = isOnionHost(url.hostname);
     const viaTor = onion || forceTor === true;
-    if (viaTor) return { dispatcher: this.tor(), viaTor };
-    try {
-      assertPublicHost(url);
-    } catch (error) {
-      throw new HttpError((error as Error).message, "blocked");
+    if (!onion) {
+      // Clear-web hosts may never be local or private, even when the hop is routed through Tor
+      try {
+        assertPublicHost(url);
+      } catch (error) {
+        throw new HttpError((error as Error).message, "blocked");
+      }
     }
-    return { dispatcher: this.direct, viaTor };
+    return viaTor ? { dispatcher: this.tor(), viaTor } : { dispatcher: this.direct, viaTor };
   }
 
   async request(input: string | URL, options: RequestOptions = {}): Promise<HttpResponse> {
@@ -156,17 +164,22 @@ export class HttpClient {
     let method = options.method ?? "GET";
     let body = options.body;
     const follow = (options.redirect ?? "follow") === "follow";
+    // Once a request has gone through Tor, every redirect hop stays on Tor: leaving it would reveal the user's IP.
+    let forceTor = options.tor;
+    let extraHeaders: Record<string, string> = { ...options.headers };
 
     for (let hop = 0; ; hop++) {
-      const { dispatcher, viaTor } = this.route(url, options.tor);
+      const { dispatcher, viaTor } = this.route(url, forceTor);
+      if (viaTor) forceTor = true;
       const timeoutMs = options.timeoutMs ?? (viaTor ? this.config.torTimeoutMs : this.config.timeoutMs);
       const timeout = AbortSignal.timeout(timeoutMs);
       const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
       const headers: Record<string, string> = {
         // Over Tor, the Tor Browser UA keeps us inside its anonymity set; elsewhere we say who we are.
-        "user-agent": viaTor ? this.config.browserUserAgent : this.config.userAgent,
+        "user-agent": viaTor ? this.config.torUserAgent : this.config.userAgent,
         accept: "*/*",
-        ...options.headers
+        ...(viaTor ? { "accept-language": "en-US,en;q=0.5" } : {}), // Tor Browser's default, for every user
+        ...extraHeaders
       };
 
       let response: Dispatcher.ResponseData;
@@ -182,7 +195,10 @@ export class HttpClient {
       if (follow && location && [301, 302, 303, 307, 308].includes(status)) {
         discard(response.body);
         if (hop >= MAX_REDIRECTS) throw new HttpError(`${label} redirected too many times.`, "http", status);
-        url = new URL(location, url);
+        const next = new URL(location, url);
+        // API keys and cookies never follow a redirect to another origin (host, port or scheme)
+        if (next.origin !== url.origin) extraHeaders = withoutCredentials(extraHeaders);
+        url = next;
         if (status === 303 || ((status === 301 || status === 302) && method === "POST")) {
           method = "GET";
           body = undefined;

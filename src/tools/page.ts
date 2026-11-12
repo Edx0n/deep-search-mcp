@@ -1,6 +1,7 @@
 import { extractHtml } from "../extract/html.js";
 import { extractPdf } from "../extract/pdf.js";
 import { HttpError, isOnionHost, statusMessage, type HttpResponse } from "../http/client.js";
+import { embeddedOnions } from "../safety/banned.js";
 import { SafetyGuard } from "../safety/guard.js";
 import { isScholarlyHost } from "../safety/scholarly.js";
 import { SafetyRefusal, type SearchDeps } from "../search.js";
@@ -29,6 +30,10 @@ export interface PageOutcome {
   description?: string;
   language?: string;
   pdf_pages?: number;
+  /** Set when a limit stopped PDF extraction early. */
+  pdf_pages_read?: number;
+  /** True when the extracted text was cut at the size, page or time limit. */
+  text_truncated?: boolean;
   total_chars: number;
   start_char: number;
   end_char: number;
@@ -42,6 +47,8 @@ export interface PageOutcome {
 
 const MAX_REDIRECTS = 5;
 const MAX_DOWNLOAD = 12 * 1024 * 1024;
+/** Text kept from one page (about 100 calls of 20k characters): screening cost stays bounded. */
+export const MAX_TEXT_CHARS = 2_000_000;
 const READABLE = /^(text\/(html|plain|xml|markdown|csv)|application\/(xhtml\+xml|xml|json|ld\+json|rss\+xml|atom\+xml|pdf))\b/i;
 
 /**
@@ -68,30 +75,41 @@ export function normalizeUserUrl(raw: string): URL {
   return url;
 }
 
-/** Safety channel used to screen a page: dark web for onions, academic for scholarly hosts, web otherwise. */
+/**
+ * Safety channel used to screen a page: dark web for onions (including tor2web gateways and archived
+ * onion copies), academic for scholarly hosts, web otherwise.
+ */
 export function pageChannel(url: URL): Channel {
-  if (isOnionHost(url.hostname)) return "darkweb";
+  if (isOnionHost(url.hostname) || embeddedOnions(url.toString()).length > 0) return "darkweb";
   return isScholarlyHost(url.hostname) ? "academic" : "web";
+}
+
+/** Onion services a URL leads to: its own host, or one embedded through a gateway or an archive. */
+function onionTargets(url: URL): string[] {
+  const targets = new Set(embeddedOnions(url.toString()));
+  if (isOnionHost(url.hostname)) targets.add(url.hostname.toLowerCase().replace(/\.$/, ""));
+  return [...targets];
 }
 
 async function assertAllowed(url: URL, deps: SearchDeps, signal?: AbortSignal): Promise<void> {
   const channel = pageChannel(url);
-  if (channel === "darkweb") {
-    if (!deps.http.torEnabled) {
-      throw new HttpError(
-        ".onion pages can only be opened through Tor. Start Tor (Tor Browser uses port 9150; the tor service uses 9050) and set DEEP_SEARCH_TOR_PROXY=socks5h://127.0.0.1:9150 in the MCP server's environment.",
-        "tor"
-      );
-    }
-    // Fail closed: never open an onion service without the abuse blacklist.
+  if (isOnionHost(url.hostname) && !deps.http.torEnabled) {
+    throw new HttpError(
+      ".onion pages can only be opened through Tor. Start Tor (Tor Browser uses port 9150; the tor service uses 9050) and set DEEP_SEARCH_TOR_PROXY=socks5h://127.0.0.1:9150 in the MCP server's environment.",
+      "tor"
+    );
+  }
+  const onions = onionTargets(url);
+  if (onions.length > 0) {
+    // Fail closed: never open an onion service (directly, via a gateway or an archive) without the abuse blacklist.
     const ready = await deps.banned.ensure(signal);
     if (!ready) {
       throw new SafetyRefusal(
-        "The Ahmia abuse blacklist could not be loaded, so onion pages are not opened (fail-closed). Check the connection and try again."
+        "The Ahmia abuse blacklist could not be loaded, so onion content is not opened (fail-closed). Check the connection and try again."
       );
     }
-    if (deps.banned.isBanned(url.hostname)) {
-      throw new SafetyRefusal("This onion service is on Ahmia's abuse blacklist. It will not be opened.");
+    if (onions.some(host => deps.banned.isBanned(host))) {
+      throw new SafetyRefusal("This onion service is on Ahmia's abuse blacklist. It is not opened, directly or through gateways and archives.");
     }
   }
   const category = deps.guard.classify(url.toString(), channel);
@@ -116,17 +134,21 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
   let url = normalizeUserUrl(input.url);
   const requested = url.toString();
   let response: HttpResponse | undefined;
+  // After an onion hop, later hops stay on Tor so a redirect to the clear web cannot reveal the user's IP
+  let viaTorSoFar = false;
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertAllowed(url, deps, signal);
     response = await deps.http.request(url, {
       redirect: "manual",
+      tor: viaTorSoFar || undefined,
       signal,
       maxBytes: MAX_DOWNLOAD,
       truncate: true,
       acceptContentType: ct => !ct || READABLE.test(ct.trim()),
       headers: { accept: "text/html,application/xhtml+xml,application/pdf;q=0.9,text/plain;q=0.8,*/*;q=0.5" }
     });
+    viaTorSoFar ||= response.viaTor;
     const location = response.headers.get("location");
     if (response.status >= 300 && response.status < 400 && location) {
       if (hop === MAX_REDIRECTS) throw new HttpError(`Too many redirects (more than ${MAX_REDIRECTS}).`, "http", response.status);
@@ -148,6 +170,8 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
   let description: string | undefined;
   let language: string | undefined;
   let pdfPages: number | undefined;
+  let pdfPagesRead: number | undefined;
+  let textTruncated = false;
   let rawLinks: Array<{ text: string; url: string }> = [];
 
   if (kind === "pdf") {
@@ -157,6 +181,8 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
       text = pdf.text;
       title = pdf.title;
       pdfPages = pdf.pages;
+      pdfPagesRead = pdf.pagesRead;
+      textTruncated = pdf.truncated;
     } catch (error) {
       throw new HttpError(`Could not read this PDF (${(error as Error).message}).`, "http");
     }
@@ -169,7 +195,15 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
     language = page.language;
     rawLinks = page.links;
   } else {
+    if (looksBinary(response.body)) {
+      throw new HttpError("This URL returned binary data; only text, HTML and PDF are read (no images, video or downloads).", "content_type");
+    }
     text = response.text();
+  }
+  // Bounded work for screening and pagination, whatever the page size
+  if (text.length > MAX_TEXT_CHARS) {
+    text = text.slice(0, MAX_TEXT_CHARS);
+    textTruncated = true;
   }
 
   const verdict = deps.guard.checkDocument([title, description, text].filter(Boolean).join("\n"), channel);
@@ -182,17 +216,20 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
   let links: PageLink[] | undefined;
   let linksHidden = 0;
   if (input.include_links && rawLinks.length) {
-    if (rawLinks.some(l => isOnionHost(safeHostname(l.url)))) await deps.banned.ensure(signal);
+    const leadsToOnion = (link: { url: string }) => isOnionHost(safeHostname(link.url)) || embeddedOnions(link.url).length > 0;
+    if (rawLinks.some(leadsToOnion)) await deps.banned.ensure(signal);
     links = [];
     for (const link of rawLinks) {
       const host = safeHostname(link.url);
       const onion = isOnionHost(host);
-      if (onion && (!deps.banned.loaded || deps.banned.isBanned(host))) {
+      const dark = leadsToOnion(link);
+      // Onion links (direct, gateway or archived) are listed only when the blacklist is loaded and clears them
+      if (dark && (!deps.banned.loaded || deps.banned.isBanned(host) || deps.banned.anyBanned(link.url))) {
         linksHidden++;
         continue;
       }
       // Each link is judged by where it points, not by the page it was found on
-      if (deps.guard.classify(`${link.text} ${link.url}`, onion ? "darkweb" : isScholarlyHost(host) ? "academic" : "web")) {
+      if (deps.guard.classify(`${link.text} ${link.url}`, dark ? "darkweb" : isScholarlyHost(host) ? "academic" : "web")) {
         linksHidden++;
         continue;
       }
@@ -214,6 +251,8 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
     ...(description ? { description } : {}),
     ...(language ? { language } : {}),
     ...(pdfPages !== undefined ? { pdf_pages: pdfPages } : {}),
+    ...(textTruncated && pdfPagesRead !== undefined ? { pdf_pages_read: pdfPagesRead } : {}),
+    ...(textTruncated ? { text_truncated: true } : {}),
     total_chars: total,
     start_char: start,
     end_char: end,
@@ -224,6 +263,13 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
     ...(links ? { links } : {}),
     ...(linksHidden ? { links_hidden: linksHidden } : {})
   };
+}
+
+/** NUL bytes near the start mean binary data (an image or archive served without a content type). */
+export function looksBinary(body: Uint8Array): boolean {
+  const head = body.subarray(0, 4096);
+  for (const byte of head) if (byte === 0) return true;
+  return false;
 }
 
 function safeHostname(url: string): string {

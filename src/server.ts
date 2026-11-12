@@ -4,7 +4,7 @@ import { TtlCache } from "./cache.js";
 import { loadConfig, VERSION, type Config } from "./config.js";
 import { renderArchive, renderPage, renderSearch, renderSources, type Rendered, type ResponseFormat } from "./format.js";
 import { HttpClient, HttpError } from "./http/client.js";
-import { BannedOnionList } from "./safety/banned.js";
+import { BannedOnionList, defaultCacheFile } from "./safety/banned.js";
 import { SafetyGuard } from "./safety/guard.js";
 import { runSearch, SafetyRefusal, type SearchDeps } from "./search.js";
 import { SOURCES } from "./sources/registry.js";
@@ -29,7 +29,8 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env, overrides: P
     http,
     guard,
     cache: new TtlCache<unknown>(config.cacheTtlMs),
-    banned: new BannedOnionList(http)
+    // With Tor configured the blacklist comes through Ahmia's onion mirror first; in onion mode, only from it
+    banned: new BannedOnionList(http, defaultCacheFile(env), { preferTor: Boolean(config.tor), torOnly: config.ahmiaMode === "onion" })
   };
 }
 

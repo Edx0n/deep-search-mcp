@@ -135,6 +135,20 @@ function walk($: CheerioAPI, node: DomNode, out: string[]): void {
   if (block) out.push("\n");
 }
 
+/**
+ * Drops trailing table-cell separators and whitespace ("a | b |  " → "a | b") in linear time.
+ * (A regex such as /(\s*\|\s*)+$/ backtracks exponentially on a line of "| | | …".)
+ */
+function trimCellSeparators(line: string): string {
+  let end = line.length;
+  while (end > 0) {
+    const c = line.charCodeAt(end - 1);
+    if (c === 124 /* | */ || c === 32 || c === 9 || c === 13 || c === 160) end--;
+    else break;
+  }
+  return line.slice(0, end);
+}
+
 function tidy(raw: string): string {
   let inCode = false;
   return raw
@@ -144,9 +158,9 @@ function tidy(raw: string): string {
         inCode = !inCode;
         return "```";
       }
-      // Preformatted blocks keep their spacing
-      if (inCode) return line.replace(/\s+$/, "");
-      return line.replace(/[ \t]+/g, " ").replace(/(\s*\|\s*)+$/, "").trim();
+      // Preformatted blocks keep their spacing (trimEnd is linear, unlike /\s+$/)
+      if (inCode) return line.trimEnd();
+      return trimCellSeparators(line.replace(/[ \t]+/g, " ")).trim();
     })
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")

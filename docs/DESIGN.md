@@ -60,14 +60,31 @@ src/
 
 | Channel | Sources | Rules applied |
 |---|---|---|
-| `academic` | scholarly metadata, and pages on scholarly hosts | only unambiguous child-abuse slang |
-| `web` | web search engines, Internet Archive, clear-web pages | every active category |
-| `darkweb` | Ahmia, `.onion` pages | every active category, plus topic rules (e.g. clinical abuse terms) and the blacklist |
+| `academic` | scholarly metadata, and pages on publisher or moderated preprint hosts | only unambiguous child-abuse slang |
+| `web` | web search engines, Internet Archive, open-data repositories (DataCite, Zenodo: anyone can upload), clear-web pages | every active category |
+| `darkweb` | Ahmia, `.onion` pages, and any URL that embeds an onion address (tor2web gateways, translation proxies, Wayback copies) | every active category, plus topic rules (e.g. clinical abuse terms) and the blacklist |
 
 - **Queries**: locked categories refuse the query on the open channels (explicit `csam`, `mass_harm`) or only on the dark web (topic terms, `exploitation`). Configurable categories never refuse queries; they only hide listings.
 - **Documents** (`deepsearch_fetch_page`): a single hit of a locked category withholds the page. Configurable categories need 3 hits, so a news article that merely mentions the subject still passes.
 - **Rules target transactions, not topics**. "buy cocaine" is filtered; "darknet drug markets research" is not. A false-positive test suite protects cases such as "bath bomb", "bomba d'água", "Al Gore", "drug delivery", "Lolita (Nabokov)", "cp command" and "recover hacked Instagram account".
 - **Ahmia's blacklist**: MD5 of the `.onion` domain (the same computation as Ahmia's own code). Opening any `.onion` page requires the list to be loaded (fail-closed).
+- **Embedded onion addresses**: `embeddedOnions()` finds v3 addresses anywhere in a URL (`<addr>.onion.ly`, `<addr>-onion-ly.translate.goog`, `web.archive.org/web/…/http://<addr>.onion/`). Search results, fetched pages, extracted links and archive lookups that lead to an onion service get the blacklist check and the dark web rules, whichever source produced them.
+- **Normalization against evasion**: invisible format characters are read both as removed and as word breaks; Cyrillic/Greek look-alike letters get a Latin reading; leetspeak gets a decoded reading. Rules run on every variant, and plain ASCII text keeps a single variant.
+
+## Network privacy and secrets
+
+- **Tor stays on**: once a request has gone through Tor, every redirect hop is forced through Tor as well (`HttpClient` and the page reader's manual redirect loop). An onion page redirecting to a clear-web tracker cannot learn the user's IP.
+- **Credentials never cross origins**: `Authorization`, `Cookie`, `x-api-key`, `API-Key` and `X-Subscription-Token` are dropped when a redirect changes scheme, host or port.
+- **Untrusted text is labeled**: `deepsearch_fetch_page` output carries a line telling the model to read it as data, never as instructions.
+- **Blacklist download and cache**: with Tor configured, the list comes from Ahmia's onion mirror first (and only from it in `onion` mode), so the first dark web action does not touch the clear web. The cache lives in a per-user directory (`$XDG_CACHE_HOME`, `%LOCALAPPDATA%` or `~/.cache`, mode 0700), is written atomically, ignored when it is a symlink or belongs to another user, and rejected below 10,000 hashes.
+- **Hops forced through Tor still refuse private addresses** (literal IPs and local names), and IPv6 forms that embed IPv4 (mapped `::ffff:`, NAT64 `64:ff9b::`) are judged by their IPv4 part.
+
+## Resource limits (hostile content)
+
+- **PDFs** are parsed in a worker thread (`src/extract/pdf.ts`) with at most 300 pages, 2,000,000 characters, a 20 s soft and 30 s hard time limit and a 512 MB heap. A hostile PDF can only kill that worker. Only the text layer is read (no font faces, no system fonts, no XFA), pdf.js logs errors only, and the worker's `console` goes to stderr, because stdout carries the MCP protocol.
+- **Text from any page** is capped at 2,000,000 characters before screening and pagination.
+- **Linear-time processing**: table-separator trimming and `<pre>` whitespace use plain loops instead of backtracking regexes, `stripTags` uses `[^<>]` on input capped at 20,000 characters, and the safety rules use bounded quantifiers.
+- **Scholarly hosts are an explicit list of registered domains** (including each SciELO national site): a host that merely contains a familiar label never switches the strict rules off.
 
 ## Decisions and rejected alternatives
 

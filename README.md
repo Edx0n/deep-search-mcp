@@ -289,17 +289,25 @@ The filter is a core part of the project and **cannot be switched off entirely**
 
 | Channel | Applies to | Rules |
 |---|---|---|
-| `academic` | Scholarly metadata, and pages on publisher or repository hosts | Only unambiguous abuse slang, so research *about* sensitive topics stays readable |
-| `web` | Web search engines, Internet Archive, clear-web pages | Every active category |
-| `darkweb` | Ahmia results, `.onion` pages | Every active category, plus topic rules and the blacklist |
+| `academic` | Scholarly metadata, and pages on publisher or moderated preprint hosts | Only unambiguous abuse slang, so research *about* sensitive topics stays readable |
+| `web` | Web search engines, Internet Archive, open-data repositories (anyone can upload), clear-web pages | Every active category |
+| `darkweb` | Ahmia results, `.onion` pages, and anything that leads to an onion service (gateways, archived copies) | Every active category, plus topic rules and the blacklist |
 
 **Other protections:**
 
-- **Ahmia's blacklist**: ~60,000 onion domains banned for abuse are dropped from results and never opened. Onion pages are not opened at all if the list cannot be loaded (fail-closed).
-- **Text only**: pages are read as text; images, video and downloads are never fetched. A page dominated by filtered content is withheld.
+- **Ahmia's blacklist**: ~60,000 onion domains banned for abuse are dropped from results and never opened. Onion pages are not opened at all if the list cannot be loaded (fail-closed). The list is cached per user (never in a shared temp folder), rejected if implausibly small, and downloaded through Ahmia's onion mirror when Tor is configured.
+- **No side doors**: onion addresses hidden inside other URLs (tor2web gateways such as `<address>.onion.ly`, translation proxies, Wayback copies) are recognized and face the same blacklist and dark web rules.
+- **Evasion-resistant matching**: invisible characters, leetspeak and Cyrillic/Greek look-alike letters are normalized before any rule runs.
+- **Text only**: pages are read as text; images, video, downloads and binary data are never returned. A page dominated by filtered content is withheld.
 - **SSRF guard**: `localhost`, private networks and cloud metadata endpoints are refused, including after redirects.
-- **No evasion**: the client identifies itself as `deep-search-mcp` on the clear web and never solves or bypasses CAPTCHAs or bot checks. Over Tor it uses the Tor Browser User-Agent, to stay in its anonymity set.
+- **Tor all the way**: once a request enters Tor, every redirect stays on Tor, so an onion page cannot bounce you to the clear web and reveal your IP. `.onion` names are resolved by Tor, never by your DNS.
+- **Keys stay home**: API keys and cookies are never forwarded when a redirect leaves the original domain, and error messages never include URLs that could carry keys.
+- **Untrusted content is labeled**: page text is marked as third-party data, a basic defense against prompt injection.
+- **Hostile files can't take the server down**: PDFs are parsed in an isolated worker thread with page, text, time and memory limits; HTML and metadata are processed with linear-time code, so crafted content cannot freeze the server.
+- **No evasion of others' defenses**: the client identifies itself as `deep-search-mcp` on the clear web and never solves or bypasses CAPTCHAs or bot checks. Over Tor it uses the Tor Browser User-Agent, to stay in its anonymity set.
 - **A refusal is final**: tool descriptions tell the model not to rephrase a query to get around a refusal.
+
+Found a security problem? See [SECURITY.md](SECURITY.md).
 
 > [!NOTE]
 > The filters are heuristic. They greatly reduce exposure but are not perfect: use the tool responsibly and within the law.
@@ -361,6 +369,7 @@ Every variable is optional; see [`.env.example`](.env.example).
 | `BRAVE_API_KEY` | Turns Brave Search on. |
 | `DEEP_SEARCH_CONTACT_EMAIL` | Contact for the Crossref/OpenAlex "polite pool". Only sent if you set it. |
 | `DEEP_SEARCH_TIMEOUT_MS` / `DEEP_SEARCH_TOR_TIMEOUT_MS` | Timeouts (default 20 s / 60 s). |
+| `DEEP_SEARCH_TOR_USER_AGENT` | User-Agent sent over Tor (default: Tor Browser's, Firefox 140 ESR). Update it when Tor Browser moves to a new ESR, so your traffic keeps blending in. |
 
 ### 🧅 Tor (optional)
 

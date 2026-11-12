@@ -1,7 +1,7 @@
 import type { TtlCache } from "./cache.js";
 import type { Config } from "./config.js";
 import { HttpError, type HttpClient } from "./http/client.js";
-import type { BannedOnionList } from "./safety/banned.js";
+import { embeddedOnions, type BannedOnionList } from "./safety/banned.js";
 import { SafetyGuard } from "./safety/guard.js";
 import type { CategoryId } from "./safety/rules.js";
 import { inYearRange } from "./sources/common.js";
@@ -125,8 +125,8 @@ export async function runSearch(
     );
   }
 
-  const needsBanned = runnable.some(s => s.channel === "darkweb");
-  const bannedReady = needsBanned ? deps.banned.ensure(signal) : Promise.resolve(deps.banned.loaded);
+  // Start loading the blacklist early when a dark web source runs (it is also loaded lazily below)
+  const bannedReady = runnable.some(s => s.channel === "darkweb") ? deps.banned.ensure(signal) : undefined;
 
   const byReason: Partial<Record<HiddenReason, number>> = {};
   const reports = new Map<SourceId, SourceReport>();
@@ -151,15 +151,21 @@ export async function runSearch(
         const base = { id: source.id, name: source.name, scope: source.scope, count: 0, has_more: false, hidden: 0, duplicates: 0 };
         try {
           const page = await fetchPage(source, { query, limit, offset, yearFrom: input.year_from, yearTo: input.year_to }, deps, signal);
-          if (source.channel === "darkweb") await bannedReady;
+          // A result that leads to an onion service (directly, via a tor2web gateway or an archive) is dark web
+          // content whichever source returned it: it faces the blacklist and the dark web rules.
+          const isDark = (r: SearchResult) => source.channel === "darkweb" || r.onion === true || embeddedOnions(r.url).length > 0;
+          const needsList = page.results.some(isDark);
+          if (needsList) await (bannedReady ?? deps.banned.ensure(signal));
 
           const kept: SearchResult[] = [];
           let hidden = 0;
           for (const result of page.results) {
             if (!result.url || !inYearRange(result.year, input.year_from, input.year_to) || excluded(result.url, excludeDomains)) continue;
+            const dark = isDark(result);
+            const channel: Channel = dark ? "darkweb" : source.channel;
             let reason: HiddenReason | null = null;
-            if (result.onion && deps.banned.isBanned(hostOf(result.url))) reason = "ahmia_blacklist";
-            else reason = deps.guard.classify(resultText(result, source.channel), source.channel);
+            if (dark && (deps.banned.isBanned(hostOf(result.url)) || deps.banned.anyBanned(result.url))) reason = "ahmia_blacklist";
+            else reason = deps.guard.classify(resultText(result, channel), channel);
             if (reason) {
               hidden++;
               byReason[reason] = (byReason[reason] ?? 0) + 1;
@@ -182,7 +188,7 @@ export async function runSearch(
             hasMore = total !== undefined ? offset + page.results.length < total : page.results.length >= limit;
           }
           pages.set(source.id, shown);
-          const note = [page.note, source.channel === "darkweb" && !deps.banned.loaded ? "Ahmia blacklist unavailable: only keyword filtering applied." : undefined]
+          const note = [page.note, needsList && !deps.banned.loaded ? "Ahmia blacklist unavailable: only keyword filtering applied." : undefined]
             .filter(Boolean)
             .join(" ");
           reports.set(source.id, { ...base, status: "ok", count: shown.length, total, has_more: hasMore, hidden, note: note || undefined, ms: Date.now() - started });

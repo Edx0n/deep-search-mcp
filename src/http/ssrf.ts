@@ -26,12 +26,12 @@ const IPV4_RANGES: Array<[string, number]> = [
   ["240.0.0.0", 4]
 ];
 const IPV6_RANGES: Array<[string, number]> = [
-  ["::", 128],
-  ["::1", 128],
+  ["::", 96], // unspecified, loopback and deprecated IPv4-compatible addresses
   ["100::", 64],
   ["2001:db8::", 32],
   ["fc00::", 7],
   ["fe80::", 10],
+  ["fec0::", 10], // deprecated site-local
   ["ff00::", 8]
 ];
 for (const [address, prefix] of IPV4_RANGES) blocked.addSubnet(address, prefix, "ipv4");
@@ -45,18 +45,25 @@ export class BlockedRequestError extends Error {
   }
 }
 
-/** IPv4 embedded in an IPv4-mapped IPv6 address (::ffff:1.2.3.4 or ::ffff:102:304). */
-function mappedIPv4(address: string): string | undefined {
-  const lower = address.toLowerCase();
-  const dotted = lower.match(/^(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (dotted?.[1]) return dotted[1];
-  const hex = lower.match(/^(?:0{0,4}:){0,5}:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (hex?.[1] && hex[2]) {
-    const hi = parseInt(hex[1], 16);
-    const lo = parseInt(hex[2], 16);
-    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+/** Canonical (compressed, hex) form of an IPv6 address, as the URL parser writes it. */
+function canonicalIPv6(address: string): string {
+  try {
+    return new URL(`http://[${address}]/`).hostname.slice(1, -1).toLowerCase();
+  } catch {
+    return address.toLowerCase();
   }
-  return undefined;
+}
+
+/**
+ * IPv4 embedded in an IPv6 address that reaches it: IPv4-mapped (::ffff:1.2.3.4) or NAT64
+ * (64:ff9b::1.2.3.4). NAT64 is judged by its IPv4 part so IPv6-only networks keep working.
+ */
+function embeddedIPv4(address: string): string | undefined {
+  const hex = canonicalIPv6(address).match(/^(?:::ffff|64:ff9b:):([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (!hex?.[1] || !hex[2]) return undefined;
+  const hi = parseInt(hex[1], 16);
+  const lo = parseInt(hex[2], 16);
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
 }
 
 /** True for loopback, private, link-local, multicast, documentation and other non-public addresses. */
@@ -64,7 +71,7 @@ export function isPrivateAddress(address: string): boolean {
   const family = net.isIP(address);
   if (family === 4) return blocked.check(address, "ipv4");
   if (family === 6) {
-    const v4 = mappedIPv4(address);
+    const v4 = embeddedIPv4(address);
     if (v4) return isPrivateAddress(v4);
     return blocked.check(address, "ipv6");
   }

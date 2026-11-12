@@ -122,6 +122,20 @@ describe("runSearch", () => {
     );
   });
 
+  it("treats web results that lead to onion services (tor2web gateways) as dark web content", async () => {
+    const gateway = (addr: string) => `https://${addr}.onion.ly/`;
+    const webWithGateways = fakeSource("duckduckgo", "web", "web", () => ({
+      results: [
+        r("duckduckgo", "Mirror of a banned service", gateway(BANNED.replace(".onion", ""))),
+        r("duckduckgo", "child abuse forum", gateway("g".repeat(56))),
+        r("duckduckgo", "child abuse forum", "https://forum.example/")
+      ]
+    }));
+    const out = await runSearch({ query: "anything", limit_per_source: 5, offset: 0 }, deps(), undefined, [webWithGateways]);
+    expect(out.results.map(x => x.url)).toEqual(["https://forum.example/"]);
+    expect(out.safety.by_reason).toMatchObject({ ahmia_blacklist: 1, csam: 1 });
+  });
+
   it("reports a failing source without failing the search", async () => {
     const broken: Source = { ...academicB, search: async () => Promise.reject(new Error("upstream down")) };
     const out = await runSearch({ query: "x", scopes: ["academic"], limit_per_source: 5, offset: 0 }, deps(), undefined, [academicA, broken]);

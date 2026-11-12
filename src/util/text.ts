@@ -33,9 +33,16 @@ export function decodeEntities(text: string): string {
   });
 }
 
-/** Removes tags (including JATS/MathML markup in abstracts), decodes entities and collapses whitespace. */
+/** Longest input stripTags looks at: it feeds snippets of at most a few hundred characters. */
+const STRIP_INPUT_LIMIT = 20_000;
+
+/**
+ * Removes tags (including JATS/MathML markup in abstracts), decodes entities and collapses whitespace.
+ * Linear time on hostile input: `[^<>]` stops a failed match at the next "<", and input is capped
+ * (descriptions come from user-editable records such as Internet Archive items).
+ */
 export function stripTags(html: string): string {
-  return collapse(decodeEntities(html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]*>/g, " ")));
+  return collapse(decodeEntities(html.slice(0, STRIP_INPUT_LIMIT).replace(/<[^<>]*>/g, " ")));
 }
 
 export function collapse(text: string): string {

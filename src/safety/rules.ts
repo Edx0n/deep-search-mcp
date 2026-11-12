@@ -200,8 +200,9 @@ const csam: Category = {
         "\\bchild\\W?porn\\w*",
         "\\bporn\\w* infantil\\w*",
         "\\bpornografia (?:de menores|infantil)",
-        "детск\\S*\\s+порн",
-        "порн\\S*\\s+детск"
+        // Bounded quantifiers: \S* here would be quadratic on long runs without spaces
+        "детск\\S{0,12}\\s{1,3}порн",
+        "порн\\S{0,12}\\s{1,3}детск"
       ),
       OPEN,
       OPEN

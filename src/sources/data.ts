@@ -51,7 +51,8 @@ export const datacite: Source = {
   id: "datacite",
   name: "DataCite",
   scope: "data",
-  channel: "academic",
+  // Open repositories accept user uploads with light moderation: screened with the web rules
+  channel: "web",
   homepage: "https://datacite.org",
   description: "Research datasets with DOIs from thousands of repositories (Zenodo, Figshare, Dryad, Dataverse, university archives).",
   isDefault: () => true,
@@ -126,7 +127,7 @@ export const zenodo: Source = {
   id: "zenodo",
   name: "Zenodo",
   scope: "data",
-  channel: "academic",
+  channel: "web",
   homepage: "https://zenodo.org",
   description: "CERN's open repository: datasets, software, reports, presentations and other grey literature that journals never index.",
   isDefault: () => true,

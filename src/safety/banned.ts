@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { HttpClient } from "../http/client.js";
@@ -16,6 +16,25 @@ export const AHMIA_BANNED_URLS = {
 
 const MEMORY_MAX_AGE_MS = 12 * 60 * 60_000;
 const DISK_MAX_AGE_MS = 24 * 60 * 60_000;
+/** The real list has ~60k entries: anything far smaller is broken or tampered with. */
+export const MIN_BANNED_HASHES = 10_000;
+
+/**
+ * Per-user cache location (never a shared temp directory, where another local user could plant a
+ * near-empty list): $XDG_CACHE_HOME, %LOCALAPPDATA% on Windows, or ~/.cache.
+ */
+export function defaultCacheFile(env: NodeJS.ProcessEnv = process.env): string {
+  const base =
+    env.XDG_CACHE_HOME?.trim() || (process.platform === "win32" ? env.LOCALAPPDATA?.trim() : undefined) || path.join(os.homedir(), ".cache");
+  return path.join(base, "deep-search-mcp", "ahmia-banned.txt");
+}
+
+export interface BannedListRouting {
+  /** Try Ahmia's onion mirror before the clear web (set when Tor is configured). */
+  preferTor?: boolean;
+  /** Never contact the clear web (DEEP_SEARCH_AHMIA_MODE=onion). */
+  torOnly?: boolean;
+}
 
 export function md5(text: string): string {
   return createHash("md5").update(text, "utf8").digest("hex");
@@ -28,6 +47,43 @@ export function parseBannedList(text: string): Set<string> {
     if (/^[0-9a-f]{32}$/.test(h)) hashes.add(h);
   }
   return hashes;
+}
+
+/**
+ * v3 onion addresses (56 base32 characters) found anywhere in a URL or text: the host itself,
+ * tor2web gateways ("<addr>.onion.ly"), translation proxies ("<addr>-onion-ly.translate.goog")
+ * and archived copies ("web.archive.org/web/2020/http://<addr>.onion/"). Every one of these
+ * paths must face the blacklist, not only hosts that end in ".onion".
+ */
+const ONION_V3 = /(?<![a-z2-7])([a-z2-7]{56})[.-]onion(?![a-z0-9])/gi;
+/**
+ * A v3 address used as a host label without any "onion" in sight ("<addr>.tor2web.example"):
+ * 56 base32 characters ending in "d" (the encoded version byte 3), followed by "." or "-".
+ */
+const V3_LABEL = /(?<![a-z2-7])([a-z2-7]{55}d)(?=[.-])/gi;
+
+/** The text plus up to three rounds of percent-decoding ("%2Eonion", double-encoded "%252E"…). */
+function decodedForms(text: string): string[] {
+  const forms = [text];
+  let current = text;
+  for (let round = 0; round < 3 && /%[0-9a-f]{2}/i.test(current); round++) {
+    try {
+      current = decodeURIComponent(current.replace(/%(?![0-9a-f]{2})/gi, "%25"));
+    } catch {
+      break;
+    }
+    forms.push(current);
+  }
+  return forms;
+}
+
+export function embeddedOnions(text: string): string[] {
+  const found = new Set<string>();
+  for (const form of decodedForms(text.slice(0, 20_000))) {
+    for (const match of form.matchAll(ONION_V3)) found.add(`${match[1]!.toLowerCase()}.onion`);
+    for (const match of form.matchAll(V3_LABEL)) found.add(`${match[1]!.toLowerCase()}.onion`);
+  }
+  return [...found];
 }
 
 /** Candidate spellings of an onion host whose hash may appear in the list. */
@@ -56,8 +112,18 @@ export class BannedOnionList {
 
   constructor(
     private readonly http: HttpClient,
-    private readonly cacheFile: string | null = path.join(os.tmpdir(), "deep-search-mcp", "ahmia-banned.txt")
+    private readonly cacheFile: string | null = defaultCacheFile(),
+    private readonly routing: BannedListRouting = {}
   ) {}
+
+  /** Download order: onion mirror first when Tor is preferred, and only the onion mirror in Tor-only mode. */
+  downloadPlan(): Array<{ url: string; tor: boolean }> {
+    const clear = { url: AHMIA_BANNED_URLS.clearnet, tor: false };
+    const onion = { url: AHMIA_BANNED_URLS.onion, tor: true };
+    if (!this.http.torEnabled) return this.routing.torOnly ? [] : [clear];
+    if (this.routing.torOnly) return [onion];
+    return this.routing.preferTor ? [onion, clear] : [clear, onion];
+  }
 
   /** For tests: preload a known list. */
   static fromHashes(http: HttpClient, hashes: Iterable<string>): BannedOnionList {
@@ -101,14 +167,19 @@ export class BannedOnionList {
     return onionHashCandidates(host).some(h => this.hashes!.has(h));
   }
 
+  /** True when any onion address embedded in `text` (host, gateway, archived URL) is banned. */
+  anyBanned(text: string): boolean {
+    return embeddedOnions(text).some(host => this.isBanned(host));
+  }
+
   private async load(signal?: AbortSignal): Promise<void> {
     const fromDisk = await this.readDiskCache();
     if (fromDisk) {
       this.setHashes(fromDisk, "disk cache");
       return;
     }
-    const attempts: Array<{ url: string; tor: boolean }> = [{ url: AHMIA_BANNED_URLS.clearnet, tor: false }];
-    if (this.http.torEnabled) attempts.push({ url: AHMIA_BANNED_URLS.onion, tor: true });
+    const attempts = this.downloadPlan();
+    if (attempts.length === 0) throw new Error("Tor-only mode needs DEEP_SEARCH_TOR_PROXY to download the Ahmia blacklist");
     let lastError: unknown;
     for (const attempt of attempts) {
       try {
@@ -119,7 +190,7 @@ export class BannedOnionList {
           label: "Ahmia blacklist"
         });
         const hashes = parseBannedList(text);
-        if (hashes.size < 100) throw new Error("Ahmia blacklist looks empty or malformed");
+        if (hashes.size < MIN_BANNED_HASHES) throw new Error("Ahmia blacklist looks truncated or malformed");
         this.setHashes(hashes, attempt.tor ? "ahmia onion" : "ahmia.fi");
         await this.writeDiskCache(text);
         return;
@@ -140,10 +211,13 @@ export class BannedOnionList {
   private async readDiskCache(): Promise<Set<string> | null> {
     if (!this.cacheFile) return null;
     try {
-      const info = await stat(this.cacheFile);
+      // lstat: a symlink planted in place of the cache is ignored, never followed
+      const info = await lstat(this.cacheFile);
+      if (!info.isFile()) return null;
+      if (typeof process.getuid === "function" && info.uid !== process.getuid()) return null;
       if (Date.now() - info.mtimeMs > DISK_MAX_AGE_MS) return null;
       const hashes = parseBannedList(await readFile(this.cacheFile, "utf8"));
-      return hashes.size >= 100 ? hashes : null;
+      return hashes.size >= MIN_BANNED_HASHES ? hashes : null;
     } catch {
       return null;
     }
@@ -152,8 +226,11 @@ export class BannedOnionList {
   private async writeDiskCache(text: string): Promise<void> {
     if (!this.cacheFile) return;
     try {
-      await mkdir(path.dirname(this.cacheFile), { recursive: true });
-      await writeFile(this.cacheFile, text, "utf8");
+      await mkdir(path.dirname(this.cacheFile), { recursive: true, mode: 0o700 });
+      // Write a fresh private file ("wx" refuses to reuse an existing path) and swap it in atomically
+      const temp = `${this.cacheFile}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(temp, text, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      await rename(temp, this.cacheFile);
     } catch {
       // Cache is an optimization only
     }

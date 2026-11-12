@@ -1,9 +1,20 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { HttpClient } from "../src/http/client.js";
-import { BannedOnionList, md5, onionHashCandidates, parseBannedList } from "../src/safety/banned.js";
+import {
+  BannedOnionList,
+  defaultCacheFile,
+  embeddedOnions,
+  md5,
+  MIN_BANNED_HASHES,
+  onionHashCandidates,
+  parseBannedList
+} from "../src/safety/banned.js";
 import { SafetyGuard } from "../src/safety/guard.js";
-import { leetVariant, normalizeText } from "../src/safety/normalize.js";
+import { homoglyphVariant, leetVariant, normalizeText, textVariants } from "../src/safety/normalize.js";
 import { CATEGORIES } from "../src/safety/rules.js";
 import type { Channel } from "../src/types.js";
 
@@ -211,6 +222,116 @@ describe("Ahmia banned list", () => {
     expect(list.isBanned("BAD.onion")).toBe(true);
     expect(list.isBanned("x.bad.onion")).toBe(true);
     expect(list.isBanned("good.onion")).toBe(false);
+  });
+});
+
+describe("evasion attempts", () => {
+  it("sees through zero-width characters, whether they glue or split words", () => {
+    expect(guard.classify("p​t​h​c archive", "academic")).toBe("csam");
+    expect(guard.checkQuery("teen​nudes").get("web")).toBe("csam");
+  });
+
+  it("reads Cyrillic/Greek look-alike letters as Latin", () => {
+    expect(guard.classify("free pоrn videos", "web")).toBe("sexual"); // Cyrillic о
+    expect(guard.checkQuery("сhild porn").get("web")).toBe("csam"); // Cyrillic с
+    expect(homoglyphVariant("рayрal")).toBe("paypal");
+    expect(guard.checkQuery("детское порно").get("web")).toBe("csam"); // real Russian still matches
+  });
+
+  it("does not multiply variants for plain text", () => {
+    expect(textVariants("hello world")).toEqual(["hello world"]);
+  });
+
+  it("strips soft hyphens, enclosing marks and empty-looking fillers", () => {
+    expect(guard.checkQuery("chi­ld porn").get("web")).toBe("csam");
+    expect(guard.checkQuery("how to make a pipe bo­mb").get("web")).toBe("mass_harm");
+    expect(guard.classify("free p⃝orn videos", "web")).toBe("sexual");
+    expect(guard.checkQuery("teenㅤnudes").get("web")).toBe("csam");
+  });
+
+  it("screens hostile long input quickly (bounded quantifiers)", () => {
+    const start = performance.now();
+    guard.checkDocument("детск".repeat(20_000), "web");
+    expect(performance.now() - start).toBeLessThan(1500);
+  });
+});
+
+describe("onion addresses hidden in other URLs", () => {
+  const http = new HttpClient(loadConfig({}).config);
+  const addr = "q".repeat(56);
+
+  it("finds v3 addresses in gateways, proxies and archive paths", () => {
+    for (const url of [
+      `http://${addr}.onion/page`,
+      `https://${addr}.onion.ly/page`,
+      `https://${addr}-onion-ly.translate.goog/`,
+      `https://web.archive.org/web/2020/http://${addr}.onion/`,
+      `HTTP://${addr.toUpperCase()}.ONION/`
+    ]) {
+      expect(embeddedOnions(url)).toEqual([`${addr}.onion`]);
+    }
+    expect(embeddedOnions(`http://${"q".repeat(57)}.onion/`)).toEqual([]);
+    expect(embeddedOnions("https://example.com/onion")).toEqual([]);
+  });
+
+  it("sees through percent-encoding and gateways without an 'onion' label", () => {
+    expect(embeddedOnions(`https://web.archive.org/web/2020/http://${addr}%2Eonion/`)).toEqual([`${addr}.onion`]);
+    expect(embeddedOnions(`https://web.archive.org/web/2020/http://${addr}%252Eonion/`)).toEqual([`${addr}.onion`]);
+    // Real v3 addresses always end in "d" (the version byte): that is how bare host labels are recognized
+    const v3 = `${"q".repeat(55)}d`;
+    expect(embeddedOnions(`https://${v3}.tor2web.example/page`)).toEqual([`${v3}.onion`]);
+    expect(embeddedOnions(`https://${v3}-tor2web-example.translate.goog/`)).toEqual([`${v3}.onion`]);
+    expect(embeddedOnions(`https://example.com/${"q".repeat(55)}x.pdf`)).toEqual([]);
+  });
+
+  it("checks them against the blacklist", () => {
+    const list = BannedOnionList.fromHashes(http, [md5(`${addr}.onion`)]);
+    expect(list.anyBanned(`https://${addr}.onion.ly/x`)).toBe(true);
+    expect(list.anyBanned(`https://${"r".repeat(56)}.onion.ly/x`)).toBe(false);
+  });
+});
+
+describe("blacklist download and cache", () => {
+  /** Stand-in for the HTTP client: records which URLs the list is fetched from. */
+  const stubHttp = (torEnabled: boolean, body: string) => {
+    const calls: Array<{ url: string; tor?: boolean }> = [];
+    const http = {
+      torEnabled,
+      async getText(url: string, options: { tor?: boolean }) {
+        calls.push({ url: String(url), tor: options.tor });
+        return body;
+      }
+    } as unknown as HttpClient;
+    return { http, calls };
+  };
+  const plausible = Array.from({ length: MIN_BANNED_HASHES }, (_, i) => md5(String(i))).join("\n");
+
+  it("prefers Ahmia's onion mirror when Tor is configured, and never the clear web in Tor-only mode", () => {
+    const urls = (torEnabled: boolean, routing: object) => new BannedOnionList(stubHttp(torEnabled, "").http, null, routing).downloadPlan().map(a => (a.tor ? "onion" : "clearnet"));
+    expect(urls(false, {})).toEqual(["clearnet"]);
+    expect(urls(true, { preferTor: true })).toEqual(["onion", "clearnet"]);
+    expect(urls(true, { preferTor: true, torOnly: true })).toEqual(["onion"]);
+    expect(urls(false, { torOnly: true })).toEqual([]);
+  });
+
+  it("rejects lists that are implausibly small (truncated or tampered with)", async () => {
+    const tiny = new BannedOnionList(stubHttp(false, Array.from({ length: 150 }, (_, i) => md5(`x${i}`)).join("\n")).http, null);
+    expect(await tiny.ensure()).toBe(false);
+    const real = new BannedOnionList(stubHttp(false, plausible).http, null);
+    expect(await real.ensure()).toBe(true);
+    expect(real.status().size).toBe(MIN_BANNED_HASHES);
+  });
+
+  it("ignores a planted near-empty cache file and caches per user, not in the shared temp dir", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "dsm-cache-"));
+    const file = path.join(dir, "ahmia-banned.txt");
+    await writeFile(file, Array.from({ length: 150 }, (_, i) => md5(`y${i}`)).join("\n"));
+    const { http, calls } = stubHttp(false, plausible);
+    const list = new BannedOnionList(http, file);
+    expect(await list.ensure()).toBe(true);
+    expect(calls).toHaveLength(1); // the planted file was not trusted: the list was downloaded
+    expect(defaultCacheFile({ XDG_CACHE_HOME: path.join(dir, "xdg") })).toBe(path.join(dir, "xdg", "deep-search-mcp", "ahmia-banned.txt"));
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

@@ -1,4 +1,5 @@
 import { isOnionHost } from "../http/client.js";
+import { embeddedOnions } from "../safety/banned.js";
 import { SafetyRefusal, type SearchDeps } from "../search.js";
 
 export type MatchType = "exact" | "prefix" | "host" | "domain";
@@ -65,12 +66,26 @@ export function parseCdx(rows: unknown): Snapshot[] {
     });
 }
 
+function hostOfTarget(target: string): string {
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(target) ? target : `http://${target}`).hostname.toLowerCase();
+  } catch {
+    return (target.replace(/^[a-z]+:\/\//i, "").split(/[/?#]/)[0] ?? "").replace(/^.*@/, "").replace(/:\d+$/, "").toLowerCase();
+  }
+}
+
 export async function archivedVersions(input: ArchiveInput, deps: SearchDeps, signal?: AbortSignal): Promise<ArchiveOutcome> {
   const target = input.url.trim();
-  const host = (target.replace(/^[a-z]+:\/\//i, "").split(/[/?#]/)[0] ?? "").toLowerCase();
-  if (isOnionHost(host)) {
-    await deps.banned.ensure(signal);
-    if (deps.banned.isBanned(host)) throw new SafetyRefusal("This onion service is on Ahmia's abuse blacklist.");
+  const host = hostOfTarget(target);
+  // Onion services reached directly, through tor2web gateways or by archive URL all face the blacklist (fail-closed)
+  const onions = new Set(embeddedOnions(target));
+  if (isOnionHost(host)) onions.add(host);
+  if (onions.size > 0) {
+    const ready = await deps.banned.ensure(signal);
+    if (!ready) {
+      throw new SafetyRefusal("The Ahmia abuse blacklist could not be loaded, so archives of onion services are not listed (fail-closed). Try again later.");
+    }
+    if ([...onions].some(h => deps.banned.isBanned(h))) throw new SafetyRefusal("This onion service is on Ahmia's abuse blacklist.");
   }
 
   const params = new URLSearchParams({
@@ -95,7 +110,8 @@ export async function archivedVersions(input: ArchiveInput, deps: SearchDeps, si
 
   let hidden = 0;
   snapshots = snapshots.filter(s => {
-    const blocked = deps.guard.classify(s.original_url, isOnionHost(host) ? "darkweb" : "web");
+    const dark = onions.size > 0 || embeddedOnions(s.original_url).length > 0;
+    const blocked = (dark && deps.banned.anyBanned(s.original_url)) || deps.guard.classify(s.original_url, dark ? "darkweb" : "web");
     if (blocked) hidden++;
     return !blocked;
   });

@@ -1,23 +1,19 @@
 /**
- * Hosts of scholarly publishers, preprint servers and research repositories. Pages and PDFs served
- * from them are screened with the "academic" rules: research ABOUT abuse, trafficking or the dark web
- * must stay readable, and these hosts do not serve abusive material.
+ * Hosts of scholarly publishers, moderated preprint servers and research indexes. Pages and PDFs
+ * served from them are screened with the "academic" rules: research ABOUT abuse, trafficking or the
+ * dark web must stay readable, and these hosts do not serve abusive material. Open upload
+ * repositories (Zenodo, Figshare, OSF, Dataverse) are deliberately NOT listed: anyone can post there.
  */
 const SCHOLARLY_DOMAINS = [
-  // Preprints and open repositories
+  // Moderated preprint servers and open-access indexes
   "arxiv.org",
   "biorxiv.org",
   "medrxiv.org",
   "ssrn.com",
-  "osf.io",
   "researchsquare.com",
   "preprints.org",
   "hal.science",
   "archives-ouvertes.fr",
-  "zenodo.org",
-  "figshare.com",
-  "datadryad.org",
-  "dataverse.harvard.edu",
   "core.ac.uk",
   "doaj.org",
   "openalex.org",
@@ -41,9 +37,25 @@ const SCHOLARLY_DOMAINS = [
   "cell.com",
   "plos.org",
   "biomedcentral.com",
-  // Latin America / Brazil
+  // Latin America / Brazil. SciELO national sites are listed one by one: matching any host that merely
+  // contains a "scielo" label would let "scielo.<attacker>.nip.io" switch the strict rules off.
   "scielo.br",
   "scielo.org",
+  "scielo.org.ar",
+  "scielo.org.bo",
+  "scielo.cl",
+  "scielo.org.co",
+  "scielo.sa.cr",
+  "scielo.sld.cu",
+  "scielo.senescyt.gob.ec",
+  "scielo.org.mx",
+  "scielo.iics.una.py",
+  "scielo.org.pe",
+  "scielo.pt",
+  "scielo.mec.pt",
+  "scielo.org.za",
+  "scielo.isciii.es",
+  "scielo.edu.uy",
   "redalyc.org",
   "bdtd.ibict.br",
   "periodicos.capes.gov.br",
@@ -71,9 +83,8 @@ const SCHOLARLY_DOMAINS = [
   "annualreviews.org"
 ];
 
+/** Exact registered domains only (and their subdomains): never a label match anywhere in the host. */
 export function isScholarlyHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.$/, "");
-  if (SCHOLARLY_DOMAINS.some(d => host === d || host.endsWith(`.${d}`))) return true;
-  // SciELO runs national mirrors: scielo.org.mx, scielo.cl, scielo.isciii.es, ...
-  return host.split(".").includes("scielo");
+  return SCHOLARLY_DOMAINS.some(d => host === d || host.endsWith(`.${d}`));
 }
