@@ -6,9 +6,20 @@ export interface TorProxy {
 /** How the Ahmia dark web index is reached: `auto` uses the onion mirror when Tor is configured. */
 export type AhmiaMode = "auto" | "clearnet" | "onion";
 
+/**
+ * Which traffic goes through Tor:
+ * - onion (default): only .onion addresses (which cannot be reached any other way)
+ * - sensitive: also the dark web index, page reading, Wayback lookups and general web search;
+ *   academic and open-data APIs stay direct
+ * - all: every request
+ * In `sensitive` and `all`, a request that must use Tor fails when Tor is unavailable: it never goes out directly.
+ */
+export type TorRoute = "onion" | "sensitive" | "all";
+
 export interface Config {
   tor?: TorProxy;
   ahmiaMode: AhmiaMode;
+  torRoute: TorRoute;
   /** Safety filter categories the user asked to disable (locked ones are ignored by the guard). */
   disabledFilters: string[];
   keys: {
@@ -107,6 +118,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): { config: Conf
     warnings.push("DEEP_SEARCH_AHMIA_MODE=onion requires DEEP_SEARCH_TOR_PROXY; dark web search will be unavailable.");
   }
 
+  let torRoute: TorRoute = "onion";
+  const routeValue = optional(env.DEEP_SEARCH_TOR_ROUTE)?.toLowerCase();
+  if (routeValue === "onion" || routeValue === "sensitive" || routeValue === "all") {
+    torRoute = routeValue;
+  } else if (routeValue) {
+    warnings.push(`DEEP_SEARCH_TOR_ROUTE="${routeValue}" is invalid (onion|sensitive|all); using onion.`);
+  }
+  if (torRoute !== "onion" && !tor) {
+    warnings.push(
+      `DEEP_SEARCH_TOR_ROUTE=${torRoute} needs DEEP_SEARCH_TOR_PROXY: requests that must use Tor will fail instead of going out directly.`
+    );
+  }
+
   const disabledFilters = (env.DEEP_SEARCH_DISABLED_FILTERS ?? "")
     .split(/[\s,;]+/)
     .map(s => s.trim().toLowerCase())
@@ -115,6 +139,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): { config: Conf
   const config: Config = {
     tor,
     ahmiaMode,
+    torRoute,
     disabledFilters,
     keys: {
       openalex: optional(env.OPENALEX_API_KEY),

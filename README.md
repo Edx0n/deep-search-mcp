@@ -361,6 +361,7 @@ Every variable is optional; see [`.env.example`](.env.example).
 |---|---|
 | `DEEP_SEARCH_TOR_PROXY` | Tor SOCKS5 proxy, e.g. `socks5h://127.0.0.1:9150` (Tor Browser) or `:9050` (tor service). Needed to **read** `.onion` pages. |
 | `DEEP_SEARCH_AHMIA_MODE` | `auto` (default: Ahmia's onion mirror when Tor is set), `clearnet` or `onion`. |
+| `DEEP_SEARCH_TOR_ROUTE` | What goes through Tor: `onion` (default), `sensitive` or `all`. See [Tor](#-tor-optional). |
 | `DEEP_SEARCH_DISABLED_FILTERS` | **Configurable** categories to turn off, e.g. `drugs,fraud` (useful for threat intelligence). Locked categories are ignored. |
 | `OPENALEX_API_KEY` | Free OpenAlex key; without it there is a small daily budget shared per IP. |
 | `CORE_API_KEY` | Free CORE key; the anonymous limit is low. |
@@ -379,6 +380,16 @@ Dark web **search** works without Tor (through `ahmia.fi`). Tor is needed to **r
 - **tor service** (Tor Expert Bundle from torproject.org): run `tor`; the proxy is `socks5h://127.0.0.1:9050`.
 
 Use `socks5h` so that `.onion` names are resolved by Tor, never by your DNS.
+
+**What goes through Tor** (`DEEP_SEARCH_TOR_ROUTE`):
+
+| Route | Through Tor | Direct (the service sees your IP) | Trade-off |
+|---|---|---|---|
+| `onion` (default) | `.onion` pages | everything else, including dark web searches on `ahmia.fi` | fastest |
+| `sensitive` | dark web search (Ahmia's onion mirror), page reading, Wayback lookups, web search (DuckDuckGo through its onion service, Marginalia, Wiby, Brave), Internet Archive | academic and open-data APIs, which only learn that someone searched a topic | recommended for privacy |
+| `all` | every request | nothing | slowest; services that limit anonymous use per IP fail more often on Tor's shared exits (free API keys help) |
+
+With `sensitive` or `all`, a request that must use Tor **fails when Tor is not running instead of going out directly**, so your IP never leaks by accident. Tor hides *who* searches, not *what*: each service still sees the query it receives.
 
 ## 🛠️ Development
 

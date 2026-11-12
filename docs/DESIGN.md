@@ -75,6 +75,7 @@ src/
 
 ## Network privacy and secrets
 
+- **Tor routing policy** (`DEEP_SEARCH_TOR_ROUTE`): `onion` (default) sends only `.onion` hosts through Tor; `sensitive` also routes requests marked `sensitive` (sources of the web, archive and dark web scopes get a client view from `withDefaults({ sensitive: true })`; the page reader, Wayback lookups and the blacklist download mark their own requests); `all` routes everything. Academic and open-data APIs stay direct under `sensitive`. Beyond `onion`, Ahmia is only reached through its onion mirror, DuckDuckGo through its official onion service, and a request that must use Tor fails when Tor is missing (fail-closed), never falling back to a direct connection.
 - **Tor stays on**: once a request has gone through Tor, every redirect hop is forced through Tor as well (`HttpClient` and the page reader's manual redirect loop). An onion page redirecting to a clear-web tracker cannot learn the user's IP.
 - **Credentials never cross origins**: `Authorization`, `Cookie`, `x-api-key`, `API-Key` and `X-Subscription-Token` are dropped when a redirect changes scheme, host or port.
 - **Untrusted text is labeled**: `deepsearch_fetch_page` output carries a line telling the model to read it as data, never as instructions.

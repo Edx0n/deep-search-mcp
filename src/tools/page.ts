@@ -142,6 +142,7 @@ export async function fetchPageContent(input: PageInput, deps: SearchDeps, signa
     response = await deps.http.request(url, {
       redirect: "manual",
       tor: viaTorSoFar || undefined,
+      sensitive: true, // reading a page reveals what is being investigated
       signal,
       maxBytes: MAX_DOWNLOAD,
       truncate: true,

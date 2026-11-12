@@ -107,6 +107,12 @@ export const wiby: Source = {
 
 // ---- DuckDuckGo (HTML endpoint): Bing-based results plus DuckDuckGo's own crawler, no Google ----
 
+export const DUCKDUCKGO_ENDPOINTS = {
+  clearnet: "https://html.duckduckgo.com/html/",
+  /** DuckDuckGo's official onion service (no exit-node bot checks when the request goes through Tor anyway). */
+  onion: "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/html/"
+};
+
 export function isDuckDuckGoChallenge(html: string): boolean {
   return /anomaly-modal|challenge-form|bots use DuckDuckGo too|g-recaptcha|h-captcha/i.test(html);
 }
@@ -156,8 +162,10 @@ export const duckduckgo: Source = {
   isDefault: () => true,
   availability: () => ({ ok: true }),
   async search(q, { http }) {
-    // Identifies itself honestly (deep-search-mcp User-Agent); bot checks are reported, never evaded.
-    const response = await http.request("https://html.duckduckgo.com/html/", {
+    // On the clear web it identifies itself honestly (deep-search-mcp User-Agent); bot checks are reported,
+    // never evaded. When the request goes through Tor anyway, DuckDuckGo's official onion service is used.
+    const endpoint = http.routesThroughTor() ? DUCKDUCKGO_ENDPOINTS.onion : DUCKDUCKGO_ENDPOINTS.clearnet;
+    const response = await http.request(endpoint, {
       method: "POST",
       signal: q.signal,
       label: "DuckDuckGo",

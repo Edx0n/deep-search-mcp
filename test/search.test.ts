@@ -148,6 +148,28 @@ describe("runSearch", () => {
     expect(out.sources[0]?.note).toMatch(/blacklist unavailable/);
   });
 
+  it("gives web, archive and dark web sources a Tor-sensitive client, academic sources a direct one", async () => {
+    const seen: Record<string, boolean> = {};
+    const probe = (id: SourceId, scope: Source["scope"], channel: Source["channel"]): Source => ({
+      ...fakeSource(id, scope, channel, () => ({ results: [] })),
+      search: async (_q, sourceDeps) => {
+        seen[id] = sourceDeps.http.routesThroughTor();
+        return { results: [] };
+      }
+    });
+    const config = loadConfig({ DEEP_SEARCH_TOR_PROXY: "socks5h://127.0.0.1:9", DEEP_SEARCH_TOR_ROUTE: "sensitive" }).config;
+    const http = new HttpClient(config);
+    const sensitiveDeps: SearchDeps = { ...deps(), config, http, banned: BannedOnionList.fromHashes(http, []) };
+    await runSearch({ query: "anything", limit_per_source: 5, offset: 0 }, sensitiveDeps, undefined, [
+      probe("openalex", "academic", "academic"),
+      probe("zenodo", "data", "web"),
+      probe("internet_archive", "archive", "web"),
+      probe("wiby", "web", "web"),
+      probe("ahmia", "darkweb", "darkweb")
+    ]);
+    expect(seen).toEqual({ openalex: false, zenodo: false, internet_archive: true, wiby: true, ahmia: true });
+  });
+
   it("reports a failing source without failing the search", async () => {
     const broken: Source = { ...academicB, search: async () => Promise.reject(new Error("upstream down")) };
     const out = await runSearch({ query: "x", scopes: ["academic"], limit_per_source: 5, offset: 0 }, deps(), undefined, [academicA, broken]);

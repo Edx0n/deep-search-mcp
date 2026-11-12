@@ -29,6 +29,11 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Route through the Tor SOCKS proxy. Defaults to true for .onion hosts (which require it). */
   tor?: boolean;
+  /**
+   * Privacy-sensitive request (dark web index, page reading, Wayback lookups, general web search).
+   * With DEEP_SEARCH_TOR_ROUTE=sensitive these go through Tor; with `all`, every request does.
+   */
+  sensitive?: boolean;
   /** "follow" (default) follows up to 5 redirects, re-checking every hop; "manual" returns the 3xx response. */
   redirect?: "follow" | "manual";
   /** Called with the response Content-Type before the body is downloaded; return false to reject it. */
@@ -111,7 +116,9 @@ function toHeaders(raw: Record<string, string | string[] | undefined>): Headers 
  */
 export class HttpClient {
   private readonly direct: Dispatcher;
-  private torAgent?: Dispatcher;
+  /** Connection pools shared with every view created by withDefaults(). */
+  private readonly pools: { tor?: Dispatcher } = {};
+  private defaults: Partial<RequestOptions> = {};
 
   constructor(private readonly config: Config) {
     // Every clear-web connection resolves through safeLookup, which refuses private addresses.
@@ -122,16 +129,31 @@ export class HttpClient {
     return this.config.tor !== undefined;
   }
 
+  /** A view of this client whose requests use these defaults, e.g. { sensitive: true } for privacy-sensitive sources. */
+  withDefaults(defaults: Partial<RequestOptions>): HttpClient {
+    const scoped = Object.create(this) as HttpClient;
+    scoped.defaults = { ...this.defaults, ...defaults };
+    return scoped;
+  }
+
+  /** True when requests with these options are forced through Tor (on top of .onion hosts, which always are). */
+  routesThroughTor(options: RequestOptions = {}): boolean {
+    const merged = { ...this.defaults, ...options };
+    if (merged.tor === true || this.config.torRoute === "all") return true;
+    return this.config.torRoute === "sensitive" && merged.sensitive === true;
+  }
+
   private tor(): Dispatcher {
     const tor = this.config.tor;
     if (!tor) {
+      const route = this.config.torRoute !== "onion" ? ` (DEEP_SEARCH_TOR_ROUTE=${this.config.torRoute} sends this request through Tor and never directly)` : "";
       throw new HttpError(
-        "Tor is not configured. Start Tor (Tor Browser listens on 127.0.0.1:9150, the tor service on 9050) and set DEEP_SEARCH_TOR_PROXY, e.g. socks5h://127.0.0.1:9050.",
+        `Tor is not configured${route}. Start Tor (Tor Browser listens on 127.0.0.1:9150, the tor service on 9050) and set DEEP_SEARCH_TOR_PROXY, e.g. socks5h://127.0.0.1:9150.`,
         "tor"
       );
     }
-    this.torAgent ??= socksDispatcher({ type: 5, host: tor.host, port: tor.port });
-    return this.torAgent;
+    this.pools.tor ??= socksDispatcher({ type: 5, host: tor.host, port: tor.port });
+    return this.pools.tor;
   }
 
   /** Validates a URL and picks the route (direct or Tor) for it. */
@@ -153,7 +175,8 @@ export class HttpClient {
     return viaTor ? { dispatcher: this.tor(), viaTor } : { dispatcher: this.direct, viaTor };
   }
 
-  async request(input: string | URL, options: RequestOptions = {}): Promise<HttpResponse> {
+  async request(input: string | URL, requestOptions: RequestOptions = {}): Promise<HttpResponse> {
+    const options: RequestOptions = { ...this.defaults, ...requestOptions };
     let url: URL;
     try {
       url = new URL(input);
@@ -164,8 +187,9 @@ export class HttpClient {
     let method = options.method ?? "GET";
     let body = options.body;
     const follow = (options.redirect ?? "follow") === "follow";
-    // Once a request has gone through Tor, every redirect hop stays on Tor: leaving it would reveal the user's IP.
-    let forceTor = options.tor;
+    // The routing policy can force Tor from the first hop. Once a request has gone through Tor, every
+    // redirect hop stays on Tor: leaving it would reveal the user's IP.
+    let forceTor: boolean | undefined = this.routesThroughTor(options) ? true : options.tor;
     let extraHeaders: Record<string, string> = { ...options.headers };
 
     for (let hop = 0; ; hop++) {

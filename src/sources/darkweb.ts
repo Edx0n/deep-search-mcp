@@ -18,6 +18,8 @@ const TOKEN_TTL_MS = 10 * 60_000;
 const tokens = new Map<string, { name: string; value: string; expires: number }>();
 
 export function ahmiaBase(config: Config): { base: string; viaTor: boolean } | null {
+  // With a Tor route beyond .onion-only, dark web searches never touch the clear web
+  if (config.torRoute !== "onion") return config.tor ? { base: AHMIA.onion, viaTor: true } : null;
   if (config.ahmiaMode === "clearnet") return { base: AHMIA.clearnet, viaTor: false };
   if (config.ahmiaMode === "onion") return config.tor ? { base: AHMIA.onion, viaTor: true } : null;
   return config.tor ? { base: AHMIA.onion, viaTor: true } : { base: AHMIA.clearnet, viaTor: false };
@@ -97,7 +99,9 @@ export const ahmia: Source = {
   description: "Search engine for Tor onion services that filters child-abuse content. Reached over the clear web by default, or through its onion mirror when DEEP_SEARCH_TOR_PROXY is set. Results are .onion links (open only through Tor).",
   isDefault: () => true,
   availability: config =>
-    ahmiaBase(config) ? { ok: true } : { ok: false, reason: "DEEP_SEARCH_AHMIA_MODE=onion needs DEEP_SEARCH_TOR_PROXY" },
+    ahmiaBase(config)
+      ? { ok: true }
+      : { ok: false, reason: "this Tor setting (DEEP_SEARCH_AHMIA_MODE=onion or DEEP_SEARCH_TOR_ROUTE) needs DEEP_SEARCH_TOR_PROXY" },
   async search(q, { http, config }): Promise<SourcePage> {
     const target = ahmiaBase(config);
     if (!target) throw new HttpError("Ahmia onion mode requires DEEP_SEARCH_TOR_PROXY.", "tor");

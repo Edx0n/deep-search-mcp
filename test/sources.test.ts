@@ -334,5 +334,8 @@ describe("Ahmia (dark web)", () => {
     expect(base({ DEEP_SEARCH_TOR_PROXY: "9050" })?.viaTor).toBe(true);
     expect(base({ DEEP_SEARCH_TOR_PROXY: "9050", DEEP_SEARCH_AHMIA_MODE: "clearnet" })?.viaTor).toBe(false);
     expect(base({ DEEP_SEARCH_AHMIA_MODE: "onion" })).toBeNull();
+    // A Tor route beyond .onion-only keeps dark web searches off the clear web, whatever the Ahmia mode
+    expect(base({ DEEP_SEARCH_TOR_PROXY: "9050", DEEP_SEARCH_TOR_ROUTE: "sensitive", DEEP_SEARCH_AHMIA_MODE: "clearnet" })?.viaTor).toBe(true);
+    expect(base({ DEEP_SEARCH_TOR_ROUTE: "all" })).toBeNull();
   });
 });

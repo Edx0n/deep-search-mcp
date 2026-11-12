@@ -174,6 +174,7 @@ export class BannedOnionList {
       try {
         const text = await this.http.getText(attempt.url, {
           tor: attempt.tor,
+          sensitive: true,
           signal,
           maxBytes: 32 * 1024 * 1024,
           label: "Ahmia blacklist"

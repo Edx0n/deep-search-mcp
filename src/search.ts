@@ -11,6 +11,9 @@ import { dedupeKey, hostOf } from "./util/text.js";
 
 export const DEFAULT_SCOPES: readonly Scope[] = ["academic", "data", "archive", "web", "darkweb"];
 
+/** Scopes whose requests go through Tor when DEEP_SEARCH_TOR_ROUTE=sensitive (academic and data APIs stay direct). */
+export const SENSITIVE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(["web", "archive", "darkweb"]);
+
 export interface SearchInput {
   query: string;
   scopes?: Scope[];
@@ -256,7 +259,9 @@ async function fetchPage(
   const completeKey = JSON.stringify([source.id, "complete", q.query.toLowerCase(), q.yearFrom, q.yearTo]);
   const cached = (deps.cache.get(completeKey) ?? deps.cache.get(key)) as SourcePage | undefined;
   if (cached) return cached;
-  const page = await source.search({ ...q, signal }, { http: deps.http, config: deps.config, cache: deps.cache, banned: deps.banned });
+  // Web, archive and dark web searches reveal what the user investigates: they follow the "sensitive" Tor route
+  const http = SENSITIVE_SCOPES.has(source.scope) ? deps.http.withDefaults({ sensitive: true }) : deps.http;
+  const page = await source.search({ ...q, signal }, { http, config: deps.config, cache: deps.cache, banned: deps.banned });
   deps.cache.set(page.complete ? completeKey : key, page);
   return page;
 }

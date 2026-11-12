@@ -237,7 +237,7 @@ export interface SourceListing {
 export interface ServerStatus {
   version: string;
   sources: SourceListing[];
-  tor: { configured: boolean; proxy?: string; ahmia_mode: string };
+  tor: { configured: boolean; proxy?: string; ahmia_mode: string; route: string };
   safety: { policy: PolicyEntry[]; ignored_config: string[]; ahmia_blacklist: BannedListStatus };
 }
 
@@ -258,6 +258,7 @@ export function renderSources(status: ServerStatus, format: ResponseFormat): Ren
     status.tor.configured
       ? `Configured (${status.tor.proxy}). .onion pages can be read; Ahmia mode: ${status.tor.ahmia_mode}.`
       : `Not configured: dark web *search* works through ahmia.fi, but reading .onion pages needs DEEP_SEARCH_TOR_PROXY (Tor Browser: socks5h://127.0.0.1:9150; tor service: socks5h://127.0.0.1:9050).`,
+    `Routing (DEEP_SEARCH_TOR_ROUTE): ${status.tor.route}. onion = only .onion addresses use Tor; sensitive = also the dark web index, page reading, Wayback lookups and web search (academic APIs stay direct); all = every request. In sensitive/all, requests that must use Tor fail rather than go out directly.`,
     "",
     "## Safety policy"
   );

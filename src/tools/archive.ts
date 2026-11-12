@@ -102,6 +102,7 @@ export async function archivedVersions(input: ArchiveInput, deps: SearchDeps, si
 
   const rows = await deps.http.getJson<unknown>(`https://web.archive.org/cdx/search/cdx?${params}`, {
     signal,
+    sensitive: true, // the URL being looked up reveals the investigation
     label: "Wayback Machine",
     timeoutMs: Math.max(deps.config.timeoutMs, 45_000)
   });

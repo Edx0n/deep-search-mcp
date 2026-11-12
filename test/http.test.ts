@@ -121,6 +121,64 @@ function startFakeTor(respond: (call: SocksCall) => string): Promise<{ server: n
 const httpResponse = (status: string, body: string, extra = "") =>
   `HTTP/1.1 ${status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n${extra}\r\n${body}`;
 
+describe("Tor routing policy (DEEP_SEARCH_TOR_ROUTE)", () => {
+  let fake: Awaited<ReturnType<typeof startFakeTor>>;
+  const client = (route: string, withProxy = true) =>
+    new HttpClient(
+      loadConfig({ ...(withProxy ? { DEEP_SEARCH_TOR_PROXY: `socks5h://127.0.0.1:${fake.port}` } : {}), DEEP_SEARCH_TOR_ROUTE: route }).config
+    );
+  const reached = (host: string) => fake.calls.some(c => c.host === host);
+
+  beforeAll(async () => {
+    fake = await startFakeTor(call => httpResponse("200 OK", `via tor to ${call.host}`));
+  });
+
+  afterAll(() => {
+    fake.server.close();
+  });
+
+  it("all: even an academic API call goes through Tor, by name", async () => {
+    const response = await client("all").request("http://api.example/works");
+    expect(response.viaTor).toBe(true);
+    expect(response.text()).toBe("via tor to api.example");
+    expect(fake.calls.at(-1)).toMatchObject({ atyp: 0x03, host: "api.example" });
+  });
+
+  it("sensitive: marked requests go through Tor, the others go out directly", async () => {
+    const http = client("sensitive");
+    const response = await http.withDefaults({ sensitive: true }).request("http://pages.example/article");
+    expect(response.viaTor).toBe(true);
+    expect(reached("pages.example")).toBe(true);
+    // Unmarked (academic) requests are not sent to the proxy: this one fails at DNS, directly
+    await expect(http.request("http://academic.invalid/")).rejects.toMatchObject({ kind: "network" });
+    expect(reached("academic.invalid")).toBe(false);
+  });
+
+  it("onion (default): nothing changes for clear-web requests, even marked ones", async () => {
+    await expect(client("onion").request("http://marked.invalid/", { sensitive: true })).rejects.toMatchObject({ kind: "network" });
+    expect(reached("marked.invalid")).toBe(false);
+  });
+
+  it("fails closed: without a proxy, a request that must use Tor never goes out directly", async () => {
+    await expect(client("all", false).request("http://api.example/")).rejects.toMatchObject({ kind: "tor" });
+    await expect(client("sensitive", false).withDefaults({ sensitive: true }).request("http://pages.example/")).rejects.toThrow(/never directly/);
+  });
+
+  it("reports the route per request", () => {
+    expect(client("onion").routesThroughTor({ sensitive: true })).toBe(false);
+    expect(client("sensitive").routesThroughTor()).toBe(false);
+    expect(client("sensitive").withDefaults({ sensitive: true }).routesThroughTor()).toBe(true);
+    expect(client("all").routesThroughTor()).toBe(true);
+  });
+
+  it("validates the setting", () => {
+    const invalid = loadConfig({ DEEP_SEARCH_TOR_ROUTE: "everything" });
+    expect(invalid.config.torRoute).toBe("onion");
+    expect(invalid.warnings.join(" ")).toMatch(/DEEP_SEARCH_TOR_ROUTE/);
+    expect(loadConfig({ DEEP_SEARCH_TOR_ROUTE: "sensitive" }).warnings.join(" ")).toMatch(/fail instead of going out directly/);
+  });
+});
+
 describe("routing through Tor (SOCKS5)", () => {
   let fake: Awaited<ReturnType<typeof startFakeTor>>;
   let http: HttpClient;

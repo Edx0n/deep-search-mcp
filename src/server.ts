@@ -30,7 +30,10 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env, overrides: P
     guard,
     cache: new TtlCache<unknown>(config.cacheTtlMs),
     // With Tor configured the blacklist comes through Ahmia's onion mirror first; in onion mode, only from it
-    banned: new BannedOnionList(http, defaultCacheFile(env), { preferTor: Boolean(config.tor), torOnly: config.ahmiaMode === "onion" })
+    banned: new BannedOnionList(http, defaultCacheFile(env), {
+      preferTor: Boolean(config.tor),
+      torOnly: config.ahmiaMode === "onion" || config.torRoute !== "onion"
+    })
   };
 }
 
@@ -254,7 +257,8 @@ Examples:
         tor: {
           configured: Boolean(config.tor),
           ...(config.tor ? { proxy: `socks5h://${config.tor.host}:${config.tor.port}` } : {}),
-          ahmia_mode: config.ahmiaMode
+          ahmia_mode: config.ahmiaMode,
+          route: config.torRoute
         },
         safety: { policy: rt.guard.policy(), ignored_config: rt.guard.ignored, ahmia_blacklist: rt.banned.status() }
       };
