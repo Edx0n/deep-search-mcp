@@ -15,7 +15,7 @@ import { SOURCES } from "../src/sources/registry.js";
 import { isDuckDuckGoChallenge, parseBrave, parseDuckDuckGo, parseMarginalia, parseWiby, unwrapDuckDuckGoLink } from "../src/sources/web.js";
 import { loadConfig } from "../src/config.js";
 import { SOURCE_IDS } from "../src/types.js";
-import { cleanDoi, dedupeKey, sanitizeLucene, stripTags } from "../src/util/text.js";
+import { cleanDoi, decodeEntities, dedupeKey, sanitizeLucene, stripTags } from "../src/util/text.js";
 
 const ONION = "a".repeat(56) + ".onion";
 
@@ -41,7 +41,13 @@ describe("helpers", () => {
   });
 
   it("strips JATS markup and entities", () => {
-    expect(stripTags("<jats:p>Caf&eacute; &amp; <b>bar</b> &#233;</jats:p>")).toBe("Caf&eacute; & bar é");
+    expect(stripTags("<jats:p>Caf&eacute; &amp; <b>bar</b> &#233;</jats:p>")).toBe("Café & bar é");
+  });
+
+  it("decodes every named HTML entity once, keeping case, and leaves unknown or unterminated ones alone", () => {
+    expect(decodeEntities("Ucr&acirc;nia, R&uacute;ssia, &Aacute;frica, cora&ccedil;&atilde;o, &alpha; &le; 2")).toBe("Ucrânia, Rússia, África, coração, α ≤ 2");
+    expect(decodeEntities("&notanentity; R&D &copy 2026 &amp;acirc;")).toBe("&notanentity; R&D &copy 2026 &acirc;");
+    expect(decodeEntities("hy&shy;phen")).toBe("hyphen");
   });
 
   it("strips tags in linear time on hostile descriptions", () => {
@@ -275,6 +281,13 @@ describe("data and archive parsers", () => {
       response: { numFound: 1, docs: [{ identifier: "old-report", title: "Old report", description: ["Part 1", "Part 2"], mediatype: "texts", year: "1999", creator: "Agency" }] }
     });
     expect(ia.results[0]).toMatchObject({ url: "https://archive.org/details/old-report", snippet: "Part 1 Part 2", type: "texts", year: 1999, authors: ["Agency"] });
+  });
+
+  it("decodes the accents Zenodo sends as named HTML entities", () => {
+    const zen = parseZenodo({
+      hits: { total: 1, hits: [{ id: 7, links: { self_html: "https://zenodo.org/records/7" }, metadata: { title: "Viola&ccedil;&otilde;es do direito humanit&aacute;rio", description: "<p>Relat&oacute;rio sobre a guerra na Ucr&acirc;nia e a situa&ccedil;&atilde;o humanit&aacute;ria.</p>" } }] }
+    });
+    expect(zen.results[0]).toMatchObject({ title: "Violações do direito humanitário", snippet: "Relatório sobre a guerra na Ucrânia e a situação humanitária." });
   });
 });
 

@@ -1,36 +1,13 @@
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-  ndash: "–",
-  mdash: "—",
-  hellip: "…",
-  laquo: "«",
-  raquo: "»",
-  ldquo: "“",
-  rdquo: "”",
-  lsquo: "‘",
-  rsquo: "’",
-  copy: "©",
-  reg: "®",
-  deg: "°",
-  middot: "·",
-  bull: "•",
-  shy: ""
-};
+import { decodeHTMLStrict } from "entities";
 
-/** Decodes the HTML entities that commonly show up in API abstracts. */
+/**
+ * Decodes the HTML character references in API text (abstracts, titles, snippets): every named entity
+ * HTML defines, case-sensitively (&Aacute; is "Á", &aacute; is "á"; Zenodo sends accents this way),
+ * plus numeric ones. One pass, so "&amp;acirc;" stays "&acirc;"; references must end with ";", so text
+ * such as "R&D" or "&copy 2026" is left alone. Soft hyphens are dropped.
+ */
 export function decodeEntities(text: string): string {
-  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
-    if (entity[0] === "#") {
-      const code = entity[1] === "x" || entity[1] === "X" ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
-    }
-    return NAMED_ENTITIES[entity.toLowerCase()] ?? match;
-  });
+  return decodeHTMLStrict(text).replace(/­/g, "");
 }
 
 const PERCENT_RUN = /(?:%[0-9a-f]{2})+/gi;
