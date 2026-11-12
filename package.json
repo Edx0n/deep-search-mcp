@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "description": "MCP server for research beyond Google: academic databases, open data, independent web indexes, web archives and the Tor dark web (via Ahmia), with built-in safety filters.",
+  "license": "MIT",
+  "author": "Edx0n",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Edx0n/deep-search-mcp.git"
+  },
+  "homepage": "https://github.com/Edx0n/deep-search-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Edx0n/deep-search-mcp/issues"
+  },
   "type": "module",
   "bin": {
     "deep-search-mcp": "dist/index.js"

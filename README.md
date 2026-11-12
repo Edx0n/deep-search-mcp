@@ -9,6 +9,7 @@
 ![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.18-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 ![Sources](https://img.shields.io/badge/sources-17-0A7EA4?style=for-the-badge)
 ![Tests](https://img.shields.io/badge/tests-unit%20%2B%20live%20smoke-2EA44F?style=for-the-badge&logo=vitest&logoColor=white)
+![License: MIT](https://img.shields.io/badge/license-MIT-F7DF1E?style=for-the-badge)
 
 [Why](#-why) · [Information flow](#-information-flow) · [Example](#-example) · [Tools](#-tools) · [Sources](#-sources) · [Safety](#-safety-model) · [Install](#-installation) · [Configuration](#-configuration) · [Development](#-development)
 
@@ -423,3 +424,7 @@ Design notes and trade-offs: [`docs/DESIGN.md`](docs/DESIGN.md).
 ## 🤝 Responsible use
 
 This is a tool for research, journalism and OSINT. Accessing Tor may be legal where you live, but what you open and what you do with it is your responsibility. Do not use this project to obtain, distribute or facilitate illegal content or activities.
+
+## 📄 License
+
+[MIT](LICENSE) © Edx0n
