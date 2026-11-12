@@ -8,7 +8,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.18-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 ![Sources](https://img.shields.io/badge/sources-17-0A7EA4?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-unit%20%2B%20live%20smoke-2EA44F?style=for-the-badge&logo=vitest&logoColor=white)
+[![CI](https://img.shields.io/github/actions/workflow/status/Edx0n/deep-search-mcp/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Edx0n/deep-search-mcp/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-F7DF1E?style=for-the-badge)
 
 [Why](#-why) · [Information flow](#-information-flow) · [Example](#-example) · [Tools](#-tools) · [Sources](#-sources) · [Safety](#-safety-model) · [Install](#-installation) · [Configuration](#-configuration) · [Development](#-development)
@@ -387,6 +387,10 @@ npm test
 ```
 
 ```bash
+npm run build && npm run handshake
+```
+
+```bash
 npm run build && npm run smoke
 ```
 
@@ -395,8 +399,11 @@ npm run live -- "your query"
 ```
 
 - `npm test`: unit tests without network. Covers the safety rules (including a false-positive suite), every source parser, the HTTP client against a simulated SOCKS5/Tor proxy, HTML extraction, the search orchestrator and output sizing.
+- `npm run handshake`: offline check of the built server over stdio (tools, prompt, sources, locked policy, input validation, refusals, SSRF guard, Tor requirement). No network needed.
 - `npm run smoke`: end-to-end check. Starts the built server over stdio like an MCP host and calls every tool against the real services.
 - `npm run live`: runs each source once and prints status, counts and timing.
+
+**Continuous integration**: every push and pull request runs GitHub Actions on Ubuntu and Windows with Node 22 and 24 (typecheck, unit tests, build, handshake), plus a build-and-handshake job on Node 20.18, the minimum supported version. The network-dependent `smoke` and `live` scripts stay manual, so CI never depends on third-party rate limits.
 
 ```
 src/

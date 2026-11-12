@@ -148,7 +148,8 @@ describe("PDF extraction in an isolated worker", () => {
   });
 
   it("kills the worker when process memory grows past the limit (covers buffers outside the heap)", async () => {
-    await expect(extractPdf(makePdf(5), { ...PDF_LIMITS, maxRssGrowthMb: 1 })).rejects.toThrow(/more than 1 MB of memory/);
+    // Enough pages that the 50 ms watchdog always gets a look, even on a fast machine
+    await expect(extractPdf(makePdf(300), { ...PDF_LIMITS, maxRssGrowthMb: 1 })).rejects.toThrow(/more than 1 MB of memory/);
   });
 
   it("processes PDFs one at a time without losing any", async () => {

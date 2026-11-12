@@ -109,3 +109,5 @@ src/
   - HTML extraction, the orchestrator with fake sources (dedupe, post-filter pagination, refusals, isolated failures) and output sizing.
 - `npm run smoke`: a real MCP client over stdio against the real services: academic and dark web search, refusals, HTML, an arXiv PDF, SSRF, Wayback and input validation.
 - `npm run live`: per-source diagnostics.
+- `npm run handshake`: offline MCP check of the built server, used by CI.
+- **CI** (`.github/workflows/ci.yml`): Ubuntu and Windows × Node 22 and 24 run typecheck, unit tests, build and the handshake; a separate job builds and runs the handshake on Node 20.18 (the declared minimum; the test runner itself needs Node 22+). Read-only token, actions pinned by commit SHA and kept current by Dependabot, no secrets, no network-dependent steps.

@@ -29,6 +29,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "tsx scripts/smoke.ts",
+    "handshake": "tsx scripts/handshake.ts",
     "live": "tsx scripts/live-check.ts"
   },
   "engines": {
