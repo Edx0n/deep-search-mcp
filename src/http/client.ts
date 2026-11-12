@@ -152,7 +152,9 @@ export class HttpClient {
         "tor"
       );
     }
-    this.pools.tor ??= socksDispatcher({ type: 5, host: tor.host, port: tor.port });
+    // fetch-socks gives up on the SOCKS handshake after 10 s by default, but reaching an onion service
+    // (rendezvous circuits, possibly through a Snowflake bridge) often takes longer: use the Tor timeout.
+    this.pools.tor ??= socksDispatcher({ type: 5, host: tor.host, port: tor.port }, { connect: { timeout: this.config.torTimeoutMs } });
     return this.pools.tor;
   }
 
@@ -208,7 +210,7 @@ export class HttpClient {
 
       let response: Dispatcher.ResponseData;
       try {
-        response = await request(url, { method, headers, body, signal, dispatcher });
+        response = await this.dispatch(url, { method, headers, body, signal, dispatcher }, viaTor && isOnionHost(url.hostname));
       } catch (error) {
         throw this.wrapError(error, label, viaTor, timeoutMs, options.signal, timeout);
       }
@@ -267,6 +269,24 @@ export class HttpClient {
           }
         }
       };
+    }
+  }
+
+  /**
+   * Sends one request. Onion circuits fail transiently (the SOCKS proxy answers "general failure" while
+   * a rendezvous circuit cannot be built); one fresh attempt usually succeeds. Timeouts are not retried.
+   */
+  private async dispatch(
+    url: URL,
+    init: { method: "GET" | "POST"; headers: Record<string, string>; body: string | undefined; signal: AbortSignal; dispatcher: Dispatcher },
+    retrySocksFailure: boolean
+  ): Promise<Dispatcher.ResponseData> {
+    try {
+      return await request(url, init);
+    } catch (error) {
+      const message = `${(error as Error)?.message ?? ""} ${((error as { cause?: Error }).cause)?.message ?? ""}`;
+      if (!retrySocksFailure || init.signal?.aborted || !/proxy rejected connection/i.test(message)) throw error;
+      return request(url, init);
     }
   }
 

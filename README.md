@@ -391,6 +391,8 @@ Use `socks5h` so that `.onion` names are resolved by Tor, never by your DNS.
 
 With `sensitive` or `all`, a request that must use Tor **fails when Tor is not running instead of going out directly**, so your IP never leaks by accident. Tor hides *who* searches, not *what*: each service still sees the query it receives.
 
+Tested on the live Tor network (through a Snowflake bridge): every source works over Tor except DuckDuckGo, which answers Tor users with a bot check (reported, never bypassed). Expect a search over Tor to take 20–45 s instead of a few seconds, mostly the dark web index; onion services sometimes need a second attempt, which the client makes automatically.
+
 ## 🛠️ Development
 
 ```bash

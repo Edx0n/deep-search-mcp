@@ -74,8 +74,12 @@ interface SocksCall {
   request: string;
 }
 
-function startFakeTor(respond: (call: SocksCall) => string): Promise<{ server: net.Server; port: number; calls: SocksCall[] }> {
+function startFakeTor(
+  respond: (call: SocksCall) => string,
+  failFirstConnectTo: ReadonlySet<string> = new Set()
+): Promise<{ server: net.Server; port: number; calls: SocksCall[] }> {
   const calls: SocksCall[] = [];
+  const failed = new Set<string>();
   const server = net.createServer(socket => {
     let stage = 0;
     let buffer = Buffer.alloc(0);
@@ -104,6 +108,13 @@ function startFakeTor(respond: (call: SocksCall) => string): Promise<{ server: n
         buffer = buffer.subarray(offset + 2);
         call = { atyp, host, port, request: "" };
         calls.push(call);
+        if (failFirstConnectTo.has(host) && !failed.has(host)) {
+          // Like Tor when a rendezvous circuit cannot be built: SOCKS5 "general failure"
+          failed.add(host);
+          socket.end(Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
+          stage = 3;
+          return;
+        }
         socket.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
         stage = 2;
       }
@@ -162,6 +173,19 @@ describe("Tor routing policy (DEEP_SEARCH_TOR_ROUTE)", () => {
   it("fails closed: without a proxy, a request that must use Tor never goes out directly", async () => {
     await expect(client("all", false).request("http://api.example/")).rejects.toMatchObject({ kind: "tor" });
     await expect(client("sensitive", false).withDefaults({ sensitive: true }).request("http://pages.example/")).rejects.toThrow(/never directly/);
+  });
+
+  it("retries an onion request once after a transient SOCKS failure", async () => {
+    const flaky = `${"f".repeat(55)}d.onion`;
+    const proxy = await startFakeTor(call => httpResponse("200 OK", `ok from ${call.host}`), new Set([flaky]));
+    try {
+      const http = new HttpClient(loadConfig({ DEEP_SEARCH_TOR_PROXY: `socks5h://127.0.0.1:${proxy.port}` }).config);
+      const response = await http.request(`http://${flaky}/`);
+      expect(response.text()).toBe(`ok from ${flaky}`);
+      expect(proxy.calls.filter(c => c.host === flaky)).toHaveLength(2);
+    } finally {
+      proxy.server.close();
+    }
   });
 
   it("reports the route per request", () => {
