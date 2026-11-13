@@ -11,6 +11,8 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Edx0n/deep-search-mcp/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Edx0n/deep-search-mcp/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-F7DF1E?style=for-the-badge)
 
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/edx0n/deep-search-mcp)
+
 [Why](#-why) · [Information flow](#-information-flow) · [Example](#-example) · [Tools](#-tools) · [Sources](#-sources) · [Safety](#-safety-model) · [Install](#-installation) · [Configuration](#-configuration) · [Development](#-development)
 
 </div>
