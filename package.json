@@ -7,11 +7,11 @@
   "author": "Edx0n",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Edx0n/deep-search-mcp.git"
+    "url": "git+https://github.com/deep-search-mcp/deep-search-mcp.git"
   },
-  "homepage": "https://github.com/Edx0n/deep-search-mcp#readme",
+  "homepage": "https://github.com/deep-search-mcp/deep-search-mcp#readme",
   "bugs": {
-    "url": "https://github.com/Edx0n/deep-search-mcp/issues"
+    "url": "https://github.com/deep-search-mcp/deep-search-mcp/issues"
   },
   "type": "module",
   "bin": {

@@ -8,7 +8,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.18-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 ![Sources](https://img.shields.io/badge/sources-17-0A7EA4?style=for-the-badge)
-[![CI](https://img.shields.io/github/actions/workflow/status/Edx0n/deep-search-mcp/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Edx0n/deep-search-mcp/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/deep-search-mcp/deep-search-mcp/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/deep-search-mcp/deep-search-mcp/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-F7DF1E?style=for-the-badge)
 
 [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/edx0n/deep-search-mcp)
@@ -319,7 +319,7 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 Requires **Node.js 20.18+**.
 
 ```bash
-git clone https://github.com/Edx0n/deep-search-mcp.git
+git clone https://github.com/deep-search-mcp/deep-search-mcp.git
 cd deep-search-mcp
 npm install
 npm run build
